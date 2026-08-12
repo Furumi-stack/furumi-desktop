@@ -1,0 +1,76 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/desktop",
+    "crates/application",
+    "crates/backend",
+    "crates/backend-api",
+    "crates/domain",
+    "crates/platform-desktop",
+    "crates/ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "WTFPL"
+authors = ["Furumi contributors"]
+description = "A native desktop player for personal music libraries and the Furumi federated network"
+readme = "README.md"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+slint = { version = "=1.17.1", default-features = false, features = [
+    "backend-winit",
+    "renderer-femtovg",
+    "renderer-software",
+    "compat-1-2",
+] }
+slint-build = "=1.17.1"
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "sync", "time", "macros", "io-util", "fs"] }
+tokio-util = { version = "=0.7.18", features = ["rt"] }
+directories = "6.0.0"
+image = { version = "0.25.10", default-features = false, features = ["webp"] }
+music-dht = "0.4.0"
+serde_json = "1.0.150"
+serde = { version = "1.0", features = ["derive"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+rfd = { version = "0.15.4", default-features = false, features = ["xdg-portal"] }
+rodio = { version = "0.22.2", default-features = false, features = [
+    "playback",
+    "mp3",
+    "flac",
+    "vorbis",
+    "wav",
+    "symphonia-aac",
+    "symphonia-isomp4",
+    "symphonia-alac",
+] }
+souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
+core-foundation = "0.10.1"
+windows-sys = { version = "0.61.2", features = ["Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
+
+furumi-application = { path = "crates/application" }
+furumi-backend = { path = "crates/backend" }
+furumi-backend-api = { path = "crates/backend-api" }
+furumi-domain = { path = "crates/domain" }
+furumi-library = "0.1.0"
+furumi-platform-desktop = { path = "crates/platform-desktop" }
+furumi-ui = { path = "crates/ui" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[patch.crates-io]
+# souvlaki 0.8.3 still uses an uninhabited Objective-C FFI marker.
+block = { path = "vendor/block" }

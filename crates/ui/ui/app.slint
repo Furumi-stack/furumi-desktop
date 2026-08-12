@@ -1,0 +1,822 @@
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Slider } from "std-widgets.slint";
+import { ArtistLinkLineView, ArtistLinkView, ArtistView, BreadcrumbView, DeviceView, PairingView, PlaylistView, QueueView, ReleaseView, TrackView, VersionView } from "models.slint";
+import { AlbumGrid, ArtistGrid, ArtistLinksRow, BuildInfoCard, DeviceRow, FederationBadge, IconButton, InfoField, LinkText, MarqueeText, NavButton, PlaylistNavButton, SearchArtistGrid, SearchField, SearchReleaseGrid, StaticArtistList, TrackInfoArtists, TrackList } from "components.slint";
+
+export component AppWindow inherits Window {
+    title: "Furumi Desktop";
+    preferred-width: 1180px;
+    preferred-height: 760px;
+    min-width: 920px;
+    min-height: 620px;
+    background: #090b10;
+    default-font-family: "sans-serif";
+
+    in property <string> app-name: "Furumi";
+    in property <string> home-label: "Home";
+    in property <string> search-label: "Search";
+    in property <string> library-label: "Your library";
+    in property <string> queue-label: "Queue";
+    in property <string> recent-label: "Recently played";
+    in property <string> featured-label: "Made for listening";
+    in property <string> search-placeholder: "Artists, albums or tracks";
+    in-out property <string> search-query;
+    in property <string> active-screen: "home";
+    in property <bool> queue-open;
+    in property <bool> settings-open;
+    in property <string> network-id;
+    in property <string> device-name;
+    in property <string> library-path;
+    in property <bool> federation-enabled;
+    in property <bool> save-federated-on-listen;
+    in property <string> selected-language: "English";
+    in property <[string]> available-languages;
+    in property <[ReleaseView]> releases;
+    in property <[ArtistView]> artists;
+    in property <[ReleaseView]> artist-albums;
+    in property <[ReleaseView]> artist-other-releases;
+    in property <[TrackView]> artist-featured-tracks;
+    in property <[TrackView]> detail-tracks;
+    in property <string> detail-title;
+    in property <string> detail-subtitle;
+    in property <[ArtistLinkView]> detail-main-artists;
+    in property <[ArtistLinkLineView]> detail-contributor-lines;
+    in property <string> detail-release-type;
+    in property <image> detail-artwork;
+    in property <bool> detail-has-artwork;
+    in property <[TrackView]> tracks;
+    in property <[QueueView]> queue-items;
+    in property <[PlaylistView]> playlists;
+    in property <[TrackView]> playlist-tracks;
+    in property <string> playlist-title;
+    in property <bool> playlist-picker-open;
+    in property <[DeviceView]> connected-devices;
+    in property <[PairingView]> pending-pairings;
+    in property <string> device-role-label;
+    in property <bool> device-is-active;
+    in property <string> active-device-label;
+    in property <string> device-group-label;
+    in property <string> device-invite;
+    in property <string> device-status;
+    in property <bool> device-busy;
+    in property <[TrackView]> search-results;
+    in property <[ArtistView]> search-artists;
+    in property <[ReleaseView]> search-releases;
+    in property <bool> federation-status-busy;
+    in property <string> federation-status-text: "Federation ready";
+    in property <string> federation-debug-node: "Stopped";
+    in property <string> federation-debug-peers: "0 connected · 0 known";
+    in property <string> federation-debug-dht: "n/a";
+    in property <string> federation-debug-published: "0 items";
+    in property <string> federation-debug-endpoint;
+    in property <[VersionView]> software-versions;
+    in property <[VersionView]> protocol-versions;
+    in property <[BreadcrumbView]> breadcrumbs;
+    in property <bool> can-go-back;
+    in property <bool> can-go-forward;
+    in property <bool> track-info-open;
+    in property <string> track-info-title;
+    in property <[ArtistLinkView]> track-info-artist-links;
+    in property <string> track-info-release;
+    in property <string> track-info-duration;
+    in property <string> track-info-format;
+    in property <string> track-info-quality;
+    in property <string> track-info-source;
+    in property <string> track-info-content-id;
+    in property <string> track-info-path;
+    in property <image> track-info-artwork;
+    in property <bool> track-info-has-artwork;
+    in property <int> detail-federation-state;
+    in property <bool> has-track;
+    in property <bool> playing;
+    in property <string> current-title;
+    in property <[ArtistLinkView]> current-artists;
+    in property <string> current-metadata;
+    in property <string> current-release;
+    in property <string> current-release-key;
+    in property <image> current-artwork;
+    in property <bool> current-has-artwork;
+    in property <string> elapsed;
+    in property <string> duration;
+    in property <float> progress;
+    in property <float> volume;
+    in property <string> error-message;
+
+    callback navigate(string);
+    callback go-back;
+    callback go-forward;
+    callback navigate-breadcrumb(string);
+    callback open-artist(string);
+    callback open-release(string);
+    callback layout-detail-contributors(float);
+    callback toggle-queue;
+    callback toggle-settings;
+    callback toggle-playback;
+    callback next;
+    callback previous;
+    callback seek(float);
+    callback set-volume(float);
+    callback play-release(string);
+    callback play-track(string);
+    callback play-track-context(string, string);
+    callback play-queue-item(string);
+    callback track-action(string, string);
+    callback open-playlist(string);
+    callback create-playlist(string);
+    callback add-track-to-playlist(string);
+    callback close-playlist-picker;
+    callback create-device-invite;
+    callback connect-device(string);
+    callback answer-pairing(string, bool, bool);
+    callback select-device(string);
+    callback search-changed(string);
+    callback network-id-changed(string);
+    callback device-name-changed(string);
+    callback library-path-changed(string);
+    callback choose-library-path;
+    callback federation-changed(bool);
+    callback save-federated-on-listen-changed(bool);
+    callback language-changed(string);
+    callback dismiss-error;
+    callback close-track-info;
+
+    Rectangle {
+        background: #090b10;
+        HorizontalLayout {
+            x: 0px; y: 0px; width: parent.width; height: parent.height - 90px;
+            spacing: 0px;
+            sidebar := Rectangle {
+                width: 218px;
+                background: #101218;
+                border-color: #232630;
+                border-width: 0px;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 7px;
+                    HorizontalLayout {
+                        height: 52px;
+                        spacing: 11px;
+                        Rectangle {
+                            width: 36px;
+                            background: transparent;
+                            Image { source: @image-url("../assets/logo.svg"); width: 36px; height: 36px; y: (parent.height - self.height) / 2; }
+                        }
+                        Text { text: root.app-name; color: #f5f6fa; font-size: 18px; font-weight: 800; vertical-alignment: center; }
+                    }
+                    NavButton { label: root.home-label; icon-source: @image-url("../assets/home.svg"); active: root.active-screen == "home"; clicked => root.navigate("home"); }
+                    NavButton { label: root.search-label; icon-source: @image-url("../assets/search.svg"); active: root.active-screen == "search"; clicked => root.navigate("search"); }
+                    NavButton { label: root.library-label; icon-source: @image-url("../assets/library.svg"); active: root.active-screen == "library"; clicked => root.navigate("library"); }
+                    Rectangle { height: 12px; background: transparent; }
+                    HorizontalLayout {
+                        height: 28px;
+                        Text { horizontal-stretch: 1; text: "PLAYLISTS"; color: #656b7b; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; vertical-alignment: center; }
+                        Rectangle {
+                            width: 28px; height: 28px; border-radius: 6px;
+                            background: add-playlist-touch.has-hover ? #282c38 : transparent;
+                            Image { source: @image-url("../assets/plus.svg"); width: 16px; height: 16px; x: 6px; y: 6px; }
+                            add-playlist-touch := TouchArea { clicked => new-playlist-popup.show(); }
+                        }
+                    }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        min-height: 0px;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            spacing: 2px;
+                            for playlist in root.playlists: PlaylistNavButton {
+                                item: playlist;
+                                active: root.active-screen == "playlist" && root.playlist-title == playlist.title;
+                                clicked(id) => root.open-playlist(id);
+                            }
+                        }
+                    }
+                    NavButton { label: "Settings"; icon-source: @image-url("../assets/settings.svg"); active: root.settings-open; clicked => root.toggle-settings(); }
+                    Rectangle {
+                        height: 58px; border-radius: 9px; background: #171a22;
+                        HorizontalLayout {
+                            padding: 10px; spacing: 10px;
+                            Rectangle { width: 34px; height: 34px; border-radius: 17px; background: #353a49; Text { text: "F"; color: #fff; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                            VerticalLayout { alignment: center; Text { text: "Local library"; color: #e9eaf0; font-size: 12px; font-weight: 600; } Text { text: "Desktop player"; color: #777d8d; font-size: 10px; } }
+                        }
+                    }
+
+                }
+                new-playlist-popup := PopupWindow {
+                    x: 16px; y: 250px; width: 250px; height: 132px;
+                    close-policy: close-on-click-outside;
+                    Rectangle {
+                        border-radius: 10px; background: #20242e; border-width: 1px; border-color: #3a3f4d;
+                        VerticalLayout {
+                            padding: 14px; spacing: 10px;
+                            Text { text: "New playlist"; color: #f5f6fa; font-size: 14px; font-weight: 700; }
+                            new-playlist-name := LineEdit { placeholder-text: "Playlist name"; }
+                            Button { text: "Create"; clicked => { root.create-playlist(new-playlist-name.text); new-playlist-name.text = ""; new-playlist-popup.close(); } }
+                        }
+                    }
+                }
+            }
+
+            content := Rectangle {
+                horizontal-stretch: 1;
+                background: #0c0e14;
+                VerticalLayout {
+                    padding-left: 26px;
+                    padding-right: 26px;
+                    padding-top: 18px;
+                    padding-bottom: 16px;
+                    spacing: 17px;
+                    HorizontalLayout {
+                        height: 42px;
+                        IconButton { enabled: root.can-go-back; icon-source: @image-url("../assets/back.svg"); clicked => root.go-back(); }
+                        IconButton { enabled: root.can-go-forward; icon-source: @image-url("../assets/forward.svg"); clicked => root.go-forward(); }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        SearchField {
+                            width: 280px;
+                            text <=> root.search-query;
+                            placeholder-text: root.search-placeholder;
+                            edited(value) => root.search-changed(value);
+                        }
+                    }
+
+                    HorizontalLayout {
+                        height: 26px;
+                        Rectangle {
+                            horizontal-stretch: 1; background: transparent; clip: true;
+                            HorizontalLayout {
+                                spacing: 0px;
+                                alignment: start;
+                                for crumb in root.breadcrumbs: Text {
+                                    horizontal-stretch: 0;
+                                    text: crumb.label;
+                                    color: crumb.target == "" ? #aeb4c2 : crumb-touch.has-hover ? #f1f2f6 : #777e8f;
+                                    font-size: 13px; font-weight: crumb.target == "" ? 650 : 500; vertical-alignment: center;
+                                    crumb-touch := TouchArea { enabled: crumb.target != ""; clicked => root.navigate-breadcrumb(crumb.target); }
+                                }
+                            }
+                        }
+                        Rectangle {
+                            height: 24px;
+                            width: 280px;
+                            border-radius: 12px;
+                            background: root.federation-status-busy ? #20352f : #191d26;
+                            border-color: root.federation-status-busy ? #3d7865 : #303541;
+                            border-width: 1px;
+                            HorizontalLayout {
+                                padding-left: 10px; padding-right: 10px; spacing: 6px;
+                                Text { text: root.federation-status-busy ? "◌" : "●"; color: root.federation-status-busy ? #55dbaa : #697080; font-size: 10px; vertical-alignment: center; }
+                                status-label := Text { text: root.federation-status-text; color: #9da3b2; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                            }
+                        }
+                    }
+
+                    if root.active-screen == "home": ScrollView {
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width;
+                            spacing: 17px;
+                            Text { text: "Good evening"; color: #f5f6fa; font-size: 28px; font-weight: 800; }
+                            Text { text: "Artists"; color: #f5f6fa; font-size: 18px; font-weight: 750; }
+                            ArtistGrid { artists: root.artists; open(key) => root.open-artist(key); }
+                            Rectangle { height: 8px; background: transparent; }
+                            Text { text: root.recent-label; color: #f5f6fa; font-size: 18px; font-weight: 750; }
+                            TrackList { tracks: root.tracks; play(key) => root.play-track-context("recent", key); action(action, key) => root.track-action(action, key); open-artist(key) => root.open-artist(key); open-release(key) => root.open-release(key); }
+                        }
+                    }
+
+                    if root.active-screen == "library": ScrollView {
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width; spacing: 17px;
+                            Text { text: root.library-label; color: #f5f6fa; font-size: 28px; font-weight: 800; }
+                            AlbumGrid { releases: root.releases; play(key) => root.play-release(key); open(key) => root.open-release(key); open-artist(key) => root.open-artist(key); }
+                        }
+                    }
+
+                    if root.active-screen == "playlist": ScrollView {
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width; spacing: 18px; alignment: start;
+                            Text { height: 46px; vertical-stretch: 0; text: root.playlist-title; color: #f5f6fa; font-size: 30px; font-weight: 800; vertical-alignment: center; }
+                            Text { height: 18px; vertical-stretch: 0; text: root.playlist-tracks.length + (root.playlist-tracks.length == 1 ? " track" : " tracks"); color: #858b9c; font-size: 12px; vertical-alignment: center; }
+                            TrackList { tracks: root.playlist-tracks; show-artwork: true; play(key) => root.play-track-context("playlist", key); action(action, key) => root.track-action(action, key); open-artist(key) => root.open-artist(key); open-release(key) => root.open-release(key); }
+                        }
+                    }
+
+                    if root.active-screen == "artist": ScrollView {
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width; spacing: 20px; alignment: start;
+                            HorizontalLayout {
+                                height: 188px; spacing: 22px;
+                                Rectangle {
+                                    width: 188px; height: 188px; border-radius: 30px; background: #292d38; clip: true;
+                                    Image { source: @image-url("../assets/note.svg"); width: 54px; height: 54px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+                                    if root.detail-has-artwork: Image { source: root.detail-artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+                                }
+                                VerticalLayout { alignment: end; spacing: 8px; Text { text: "ARTIST"; color: #9298a8; font-size: 11px; font-weight: 700; } Text { text: root.detail-title; color: #f5f6fa; font-size: 34px; font-weight: 800; overflow: elide; } Text { text: root.detail-subtitle; color: #858b9c; font-size: 13px; } }
+                            }
+                            if root.artist-albums.length > 0: Text { height: 28px; vertical-stretch: 0; text: "Albums"; color: #f5f6fa; font-size: 20px; font-weight: 750; vertical-alignment: center; }
+                            if root.artist-albums.length > 0: AlbumGrid { releases: root.artist-albums; show-artists: false; play(key) => root.play-release(key); open(key) => root.open-release(key); open-artist(key) => root.open-artist(key); }
+                            if root.artist-other-releases.length > 0: Text { height: 28px; vertical-stretch: 0; text: "Singles, EPs and other releases"; color: #f5f6fa; font-size: 20px; font-weight: 750; vertical-alignment: center; }
+                            if root.artist-other-releases.length > 0: AlbumGrid { releases: root.artist-other-releases; show-artists: false; show-release-types: true; play(key) => root.play-release(key); open(key) => root.open-release(key); open-artist(key) => root.open-artist(key); }
+                            if root.artist-featured-tracks.length > 0: Text { height: 28px; vertical-stretch: 0; text: "Featured on"; color: #f5f6fa; font-size: 20px; font-weight: 750; vertical-alignment: center; }
+                            if root.artist-featured-tracks.length > 0: TrackList { tracks: root.artist-featured-tracks; show-artwork: true; play(key) => root.play-track-context("artist-featured", key); action(action, key) => root.track-action(action, key); open-artist(key) => root.open-artist(key); open-release(key) => root.open-release(key); }
+                        }
+                    }
+
+                    if root.active-screen == "release": ScrollView {
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width; spacing: 20px;
+                            HorizontalLayout {
+                                height: 188px; spacing: 22px;
+                                Rectangle {
+                                    width: 188px; height: 188px; border-radius: 9px; background: #292d38; clip: true;
+                                    Image { source: @image-url("../assets/note.svg"); width: 54px; height: 54px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+                                    if root.detail-has-artwork: Image { source: root.detail-artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+                                }
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    height: 188px;
+                                    background: transparent;
+                                    VerticalLayout {
+                                        x: 0px; y: 68px; width: parent.width; height: 111px;
+                                        spacing: 2px; alignment: start;
+                                        HorizontalLayout {
+                                            height: 18px; spacing: 8px;
+                                            Text { text: root.detail-release-type; color: #9298a8; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                            if root.detail-federation-state > 0: FederationBadge { partial: root.detail-federation-state == 2; }
+                                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                                        }
+                                        Text { width: parent.width; height: 43px; text: root.detail-title; color: #f5f6fa; font-size: 34px; font-weight: 800; overflow: elide; vertical-alignment: center; }
+                                        ArtistLinksRow { width: parent.width; height: 20px; artists: root.detail-main-artists; text-size: 13px; open-artist(key) => root.open-artist(key); }
+                                    }
+                                }
+                            }
+                            if root.detail-contributor-lines.length > 0: StaticArtistList {
+                                width: parent.width / 2;
+                                lines: root.detail-contributor-lines;
+                                heading: "Featuring";
+                                open-artist(key) => root.open-artist(key);
+                                changed width => {
+                                    root.layout-detail-contributors(self.width / 1px);
+                                }
+                            }
+                            TrackList { tracks: root.detail-tracks; play(key) => root.play-track-context("release", key); action(action, key) => root.track-action(action, key); open-artist(key) => root.open-artist(key); open-release(key) => root.open-release(key); }
+                        }
+                    }
+
+                    if root.active-screen == "search": ScrollView {
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width; spacing: 14px; alignment: start;
+                            HorizontalLayout {
+                                height: 34px;
+                                Text { text: root.search-query == "" ? "Search your music" : "Results for “" + root.search-query + "”"; color: #f5f6fa; font-size: 25px; font-weight: 800; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                            }
+                            if root.search-artists.length > 0: Text { height: 24px; text: "Artists"; color: #f5f6fa; font-size: 18px; font-weight: 750; vertical-alignment: center; }
+                            if root.search-artists.length > 0: SearchArtistGrid { artists: root.search-artists; open(key) => root.open-artist(key); }
+                            if root.search-releases.length > 0: Text { height: 24px; text: "Releases"; color: #f5f6fa; font-size: 18px; font-weight: 750; vertical-alignment: center; }
+                            if root.search-releases.length > 0: SearchReleaseGrid { releases: root.search-releases; open(key) => root.open-release(key); }
+                            if root.search-results.length > 0: Text { height: 24px; text: "Tracks"; color: #f5f6fa; font-size: 18px; font-weight: 750; vertical-alignment: center; }
+                            TrackList { tracks: root.search-results; show-artwork: true; play(key) => root.play-track-context("search", key); action(action, key) => root.track-action(action, key); open-artist(key) => root.open-artist(key); open-release(key) => root.open-release(key); }
+                        }
+                    }
+                }
+            }
+
+            if root.queue-open: queue-panel := Rectangle {
+                width: 292px;
+                background: #11141b;
+                border-color: #252936;
+                border-width: 1px;
+                VerticalLayout {
+                    padding: 17px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        height: 34px;
+                        Text { text: root.queue-label; color: #f5f6fa; font-size: 18px; font-weight: 750; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        IconButton { icon-source: @image-url("../assets/close.svg"); clicked => root.toggle-queue(); }
+                    }
+                    Text { text: "Now playing and up next"; color: #777d8d; font-size: 11px; }
+                    VerticalLayout {
+                        spacing: 4px;
+                        for item in root.queue-items: Rectangle {
+                            height: 52px; border-radius: 7px; background: item.active ? #242a35 : transparent;
+                            TouchArea { double-clicked => root.play-queue-item(item.key); }
+                            HorizontalLayout {
+                                padding: 7px; spacing: 10px;
+                                Rectangle { width: 38px; height: 38px; border-radius: 5px; background: #292d38; Image { source: @image-url("../assets/note.svg"); width: 21px; height: 21px; x: 8px; y: 8px; } if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; } }
+                                Rectangle {
+                                    width: 190px; height: parent.height; background: transparent; clip: true;
+                                    VerticalLayout {
+                                        x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center;
+                                        MarqueeText { width: parent.width; height: 18px; label: item.title; text-color: item.active ? #55dbaa : #e7e9ef; text-size: 12px; text-weight: 600; }
+                                        LinkText { width: parent.width; label: item.artist; base-color: #777d8d; text-size: 10px; height: 15px; clicked => root.open-artist(item.artist-key); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                }
+            }
+        }
+
+        player := Rectangle {
+            x: 0px; y: parent.height - 90px; width: parent.width; height: 90px;
+            background: #11131a;
+            border-color: #282b35;
+            border-width: 1px;
+            HorizontalLayout {
+                padding-left: 18px; padding-right: 18px; padding-top: 12px; padding-bottom: 10px;
+                spacing: 18px;
+                HorizontalLayout {
+                    width: 260px; spacing: 11px;
+                    Rectangle {
+                        width: 54px; height: 54px; border-radius: 6px; background: #292d38; clip: true;
+                        Image { source: @image-url("../assets/note.svg"); width: 28px; height: 28px; x: 13px; y: 13px; }
+                        if root.current-has-artwork: Image { source: root.current-artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+                        if root.current-has-artwork: TouchArea { clicked => artwork-popup.show(); }
+                    }
+                    VerticalLayout {
+                        width: 195px;
+                        alignment: center;
+                        Text { width: 195px; text: root.current-title; color: #f3f4f8; font-size: 13px; font-weight: 650; overflow: elide; }
+                        ArtistLinksRow { width: 195px; height: 16px; artists: root.current-artists; row-color: #818797; open-artist(key) => root.open-artist(key); }
+                        Text { width: 195px; text: root.current-metadata; color: #656b7b; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1; spacing: 7px;
+                    HorizontalLayout {
+                        alignment: center; spacing: 8px;
+                        IconButton { icon-source: @image-url("../assets/previous.svg"); clicked => root.previous(); }
+                        Rectangle {
+                            width: 42px; height: 42px; border-radius: 21px; background: #f4f5f8;
+                            if root.playing: Image { source: @image-url("../assets/pause.svg"); width: 19px; height: 19px; x: 11px; y: 11px; }
+                            if !root.playing: Image { source: @image-url("../assets/play.svg"); width: 19px; height: 19px; x: 12px; y: 11px; }
+                            TouchArea { clicked => root.toggle-playback(); }
+                        }
+                        IconButton { icon-source: @image-url("../assets/next.svg"); clicked => root.next(); }
+                    }
+                    HorizontalLayout {
+                        spacing: 9px;
+                        Text { text: root.elapsed; color: #818797; font-size: 10px; width: 34px; horizontal-alignment: right; vertical-alignment: center; }
+                        Slider { horizontal-stretch: 1; height: 18px; minimum: 0; maximum: 1; value: root.progress; changed(value) => root.seek(value); }
+                        Text { text: root.duration; color: #818797; font-size: 10px; width: 34px; vertical-alignment: center; }
+                    }
+                }
+                Rectangle {
+                    width: 238px; background: transparent;
+                    IconButton { x: 0px; y: (parent.height - self.height) / 2; icon-source: @image-url("../assets/queue.svg"); clicked => root.toggle-queue(); }
+                    Image { x: 48px; y: (parent.height - self.height) / 2; source: @image-url("../assets/volume.svg"); width: 18px; height: 18px; }
+                    Slider { x: 75px; y: (parent.height - self.height) / 2; width: 100px; height: 18px; minimum: 0; maximum: 1; value: root.volume; changed(value) => root.set-volume(value); }
+                    IconButton {
+                        x: 190px; y: (parent.height - self.height) / 2;
+                        icon-source: @image-url("../assets/devices.svg");
+                        icon-color: root.device-is-active ? #e58bd7 : transparent;
+                        clicked => devices-popup.show();
+                    }
+                    devices-popup := PopupWindow {
+                        x: -130px; y: -474px; width: 368px; height: 464px;
+                        close-policy: close-on-click-outside;
+                        Rectangle {
+                            border-radius: 12px; background: #1b1f28; border-width: 1px; border-color: #3a3f4d;
+                            VerticalLayout {
+                                padding: 16px; spacing: 10px;
+                                HorizontalLayout {
+                                    height: 36px;
+                                    VerticalLayout {
+                                        Text { text: "Connected devices"; color: #f5f6fa; font-size: 17px; font-weight: 750; }
+                                        Text { text: root.device-role-label + " · " + root.active-device-label; color: #7f8797; font-size: 10px; }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                                    IconButton { icon-source: @image-url("../assets/close.svg"); clicked => devices-popup.close(); }
+                                }
+                                Text { text: root.device-group-label; color: #697080; font-size: 10px; overflow: elide; }
+                                Rectangle { height: 1px; background: #303541; }
+                                Text { height: 16px; text: "ACTIVE DEVICE"; color: #697080; font-size: 9px; font-weight: 750; letter-spacing: 0.8px; vertical-alignment: center; }
+                                for device in root.connected-devices: DeviceRow {
+                                    visible: device.active;
+                                    height: device.active ? 48px : 0px;
+                                    item: device;
+                                    selectable: false;
+                                }
+                                Text { height: 16px; text: "AVAILABLE DEVICES"; color: #697080; font-size: 9px; font-weight: 750; letter-spacing: 0.8px; vertical-alignment: center; }
+                                ScrollView {
+                                    vertical-stretch: 1;
+                                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                                    vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        for device in root.connected-devices: DeviceRow {
+                                            visible: !device.active;
+                                            height: !device.active ? 48px : 0px;
+                                            item: device;
+                                            selectable: !device.revoked && (device.online || device.is-self);
+                                            selected(id) => root.select-device(id);
+                                        }
+                                        for pairing in root.pending-pairings: Rectangle {
+                                            height: 76px; border-radius: 7px; background: #252a35;
+                                            VerticalLayout {
+                                                padding: 8px; spacing: 5px;
+                                                Text { text: pairing.name + " wants to connect"; color: #f0f1f5; font-size: 11px; font-weight: 650; overflow: elide; }
+                                                Text { text: pairing.details; color: #7f8797; font-size: 9px; overflow: elide; }
+                                                HorizontalLayout {
+                                                    spacing: 7px;
+                                                    Button { text: "Accept"; clicked => root.answer-pairing(pairing.request-id, true, pairing.group-conflict); }
+                                                    Button { text: "Deny"; clicked => root.answer-pairing(pairing.request-id, false, false); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle { height: 1px; background: #303541; }
+                                if root.device-invite != "": Text { text: root.device-invite; color: #9ca4b4; font-size: 9px; wrap: word-wrap; max-height: 36px; overflow: elide; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    device-link := LineEdit { horizontal-stretch: 1; placeholder-text: "Paste frid://i/… invite"; }
+                                    Button { text: "Connect"; enabled: !root.device-busy && device-link.text != ""; clicked => root.connect-device(device-link.text); }
+                                }
+                                HorizontalLayout {
+                                    Button { text: root.device-invite == "" ? "Create invite" : "New invite"; enabled: !root.device-busy; clicked => root.create-device-invite(); }
+                                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                                    Text { text: root.device-status; color: root.device-status == "" ? transparent : #8c93a3; font-size: 9px; vertical-alignment: center; overflow: elide; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.playlist-picker-open: Rectangle {
+        background: #05070ab8;
+        TouchArea { clicked => root.close-playlist-picker(); }
+        Rectangle {
+            width: 360px; height: min(430px, parent.height - 80px);
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            border-radius: 12px; background: #1b1f28; border-width: 1px; border-color: #3a3f4d;
+            TouchArea { }
+            VerticalLayout {
+                padding: 18px; spacing: 12px;
+                HorizontalLayout {
+                    height: 34px;
+                    Text { horizontal-stretch: 1; text: "Add to playlist"; color: #f5f6fa; font-size: 18px; font-weight: 750; vertical-alignment: center; }
+                    IconButton { icon-source: @image-url("../assets/close.svg"); clicked => root.close-playlist-picker(); }
+                }
+                Rectangle { height: 1px; background: #303541; }
+                ScrollView {
+                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                    vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                    VerticalLayout {
+                        spacing: 4px;
+                        for playlist in root.playlists: Rectangle {
+                            visible: !playlist.is-likes;
+                            height: !playlist.is-likes ? 48px : 0px; border-radius: 7px; background: picker-touch.has-hover ? #292e3a : transparent;
+                            VerticalLayout {
+                                padding-left: 10px; padding-right: 10px; alignment: center;
+                                Text { text: playlist.title; color: #e8eaf0; font-size: 12px; font-weight: 650; overflow: elide; }
+                                Text { text: playlist.details; color: #757c8c; font-size: 10px; }
+                            }
+                            picker-touch := TouchArea { clicked => root.add-track-to-playlist(playlist.id); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.settings-open: Rectangle {
+        background: #05070ad9;
+        TouchArea { clicked => root.toggle-settings(); }
+        settings-card := Rectangle {
+            width: min(620px, parent.width - 48px);
+            height: min(650px, parent.height - 48px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 14px;
+            background: #171a22;
+            border-color: #303541;
+            border-width: 1px;
+            // Consume clicks anywhere inside the card so they do not reach the
+            // modal backdrop. Interactive controls below remain on top.
+            TouchArea { }
+            VerticalLayout {
+                padding: 24px;
+                spacing: 14px;
+                HorizontalLayout {
+                    height: 38px;
+                    VerticalLayout {
+                        Text { text: "Settings"; color: #f5f6fa; font-size: 23px; font-weight: 800; }
+                        Text { text: "Desktop player preferences"; color: #7f8595; font-size: 11px; }
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    IconButton { icon-source: @image-url("../assets/close.svg"); clicked => root.toggle-settings(); }
+                }
+                Rectangle { height: 1px; background: #2a2e38; }
+                ScrollView {
+                    vertical-stretch: 1;
+                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                    vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                    VerticalLayout {
+                        width: parent.width; spacing: 14px; alignment: start;
+                        VerticalLayout {
+                            spacing: 7px;
+                            Text { text: "Network ID"; color: #e8eaf0; font-size: 13px; font-weight: 650; }
+                            Text { text: "Peers with the same value form one logical federation network."; color: #818797; font-size: 11px; }
+                            LineEdit {
+                                text: root.network-id;
+                                placeholder-text: "furumi";
+                                edited => root.network-id-changed(self.text);
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 7px;
+                            Text { text: "Device name"; color: #e8eaf0; font-size: 13px; font-weight: 650; }
+                            Text { text: "Shown to your other players when connecting devices or transferring playback."; color: #818797; font-size: 11px; }
+                            LineEdit {
+                                text: root.device-name;
+                                placeholder-text: "Furumi on this computer";
+                                edited => root.device-name-changed(self.text);
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 7px;
+                            Text { text: "Library path"; color: #e8eaf0; font-size: 13px; font-weight: 650; }
+                            Text { text: "Music and downloaded tracks will be stored in this directory."; color: #818797; font-size: 11px; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text: root.library-path;
+                                    placeholder-text: "~/Music/Furumi";
+                                    horizontal-stretch: 1;
+                                    edited => root.library-path-changed(self.text);
+                                }
+                                Button { text: "Choose…"; clicked => root.choose-library-path(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            height: 52px;
+                            VerticalLayout {
+                                Text { text: "Federation"; color: #e8eaf0; font-size: 13px; font-weight: 650; }
+                                Text { text: "Discover and play music shared by peers."; color: #818797; font-size: 11px; }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            CheckBox {
+                                text: "Enabled";
+                                checked: root.federation-enabled;
+                                toggled => root.federation-changed(self.checked);
+                            }
+                        }
+                        Rectangle {
+                            min-height: 104px; max-height: 104px; vertical-stretch: 0;
+                            border-radius: 9px; background: #11151d; border-width: 1px; border-color: #2c3240;
+                            VerticalLayout {
+                                padding: 11px; spacing: 6px;
+                                HorizontalLayout {
+                                    height: 18px;
+                                    Text { horizontal-stretch: 1; text: "Federation diagnostics"; color: #dfe2ea; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                    Text { text: root.federation-debug-node; color: root.federation-enabled ? #55dbaa : #777d8d; font-size: 10px; vertical-alignment: center; }
+                                }
+                                HorizontalLayout {
+                                    height: 18px; spacing: 14px;
+                                    Text { width: 250px; text: "Peers  " + root.federation-debug-peers; color: #8f96a6; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                                    Text { horizontal-stretch: 1; text: "DHT  " + root.federation-debug-dht; color: #8f96a6; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                                }
+                                HorizontalLayout {
+                                    height: 18px; spacing: 14px;
+                                    Text { width: 250px; text: "Published  " + root.federation-debug-published; color: #8f96a6; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                                    Text { horizontal-stretch: 1; text: "Endpoint  " + root.federation-debug-endpoint; color: #697080; font-size: 9px; overflow: elide; vertical-alignment: center; }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            height: 52px;
+                            VerticalLayout {
+                                Text { text: "Keep federated tracks"; color: #e8eaf0; font-size: 13px; font-weight: 650; }
+                                Text { text: "Import music played from peers and make it available to the federation."; color: #818797; font-size: 11px; }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            CheckBox {
+                                text: "Enabled";
+                                checked: root.save-federated-on-listen;
+                                toggled => root.save-federated-on-listen-changed(self.checked);
+                            }
+                        }
+                        HorizontalLayout {
+                            height: 52px;
+                            VerticalLayout {
+                                Text { text: "Language"; color: #e8eaf0; font-size: 13px; font-weight: 650; }
+                                Text { text: "Interface language."; color: #818797; font-size: 11px; }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            ComboBox {
+                                width: 180px;
+                                model: root.available-languages;
+                                current-value: root.selected-language;
+                                selected(value) => root.language-changed(value);
+                            }
+                        }
+                        BuildInfoCard {
+                            width: parent.width;
+                            software: root.software-versions;
+                            protocols: root.protocol-versions;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.track-info-open: Rectangle {
+        background: #05070ad9;
+        TouchArea { clicked => root.close-track-info(); }
+        info-card := Rectangle {
+            width: min(680px, parent.width - 48px);
+            height: 430px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 12px;
+            background: #171a22;
+            border-color: #3a3f4d;
+            border-width: 2px;
+            TouchArea { }
+            VerticalLayout {
+                padding: 22px; spacing: 16px;
+                HorizontalLayout {
+                    height: 38px;
+                    Text { text: "Track information"; color: #f5f6fa; font-size: 21px; font-weight: 800; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    IconButton { icon-source: @image-url("../assets/close.svg"); clicked => root.close-track-info(); }
+                }
+                Rectangle { height: 1px; background: #2a2e38; }
+                HorizontalLayout {
+                    spacing: 22px;
+                    Rectangle {
+                        width: 210px; height: 210px; border-radius: 8px; background: #292d38; clip: true;
+                        Image { source: @image-url("../assets/note.svg"); width: 56px; height: 56px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+                        if root.track-info-has-artwork: Image { source: root.track-info-artwork; image-fit: ImageFit.contain; width: parent.width; height: parent.height; }
+                    }
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text { height: 34px; text: root.track-info-title; color: #f5f6fa; font-size: 20px; font-weight: 750; overflow: elide; vertical-alignment: center; }
+                        TrackInfoArtists { artists: root.track-info-artist-links; open-artist(key) => root.open-artist(key); }
+                        InfoField { label: "Release"; value: root.track-info-release; }
+                        InfoField { label: "Duration"; value: root.track-info-duration; }
+                        InfoField { label: "Format"; value: root.track-info-format; }
+                        InfoField { label: "Audio quality"; value: root.track-info-quality; }
+                        InfoField { label: "Source"; value: root.track-info-source; }
+                    }
+                }
+                InfoField { label: "Content ID"; value: root.track-info-content-id; }
+                InfoField { label: "File / peer"; value: root.track-info-path; }
+            }
+        }
+    }
+
+    if root.error-message != "": Rectangle {
+        x: parent.width - self.width - 18px;
+        y: 18px;
+        width: 320px;
+        height: 62px;
+        border-radius: 9px;
+        background: #3b2028;
+        Text { text: root.error-message; color: #ffd9e0; font-size: 12px; x: 14px; width: parent.width - 48px; vertical-alignment: center; wrap: word-wrap; }
+        Text { text: "×"; color: #ffd9e0; x: parent.width - 30px; width: 20px; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => root.dismiss-error(); }
+    }
+
+    artwork-popup := PopupWindow {
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        width: 560px;
+        height: 560px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            width: parent.width; height: parent.height;
+            border-radius: 8px;
+            background: #171a22;
+            border-color: #3a3f4d;
+            border-width: 2px;
+            clip: true;
+            Image { x: 8px; y: 8px; source: root.current-artwork; width: parent.width - 16px; height: parent.height - 16px; image-fit: ImageFit.contain; }
+        }
+    }
+}

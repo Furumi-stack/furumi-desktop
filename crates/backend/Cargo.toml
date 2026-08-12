@@ -1,0 +1,23 @@
+[package]
+name = "furumi-backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+furumi-backend-api.workspace = true
+furumi-domain.workspace = true
+furumi-library.workspace = true
+music-dht.workspace = true
+directories.workspace = true
+rusqlite.workspace = true
+rodio.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

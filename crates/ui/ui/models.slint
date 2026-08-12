@@ -1,0 +1,90 @@
+export struct ReleaseView {
+    key: string,
+    title: string,
+    artist: string,
+    artist-key: string,
+    year: string,
+    release-type: string,
+    artwork: image,
+    has-artwork: bool,
+    federation-state: int,
+}
+
+export struct BreadcrumbView { label: string, target: string }
+
+export struct ArtistView {
+    key: string,
+    name: string,
+    details: string,
+    artwork: image,
+    has-artwork: bool,
+    federated: bool,
+}
+
+export struct ArtistLinkView {
+    key: string,
+    name: string,
+    prefix: string,
+}
+
+export struct ArtistLinkLineView {
+    artists: [ArtistLinkView],
+}
+
+export struct VersionView {
+    name: string,
+    version: string,
+}
+
+export struct TrackView {
+    key: string,
+    number: string,
+    title: string,
+    artists: [ArtistLinkView],
+    artists-label: string,
+    artist-line-break: int,
+    release: string,
+    release-key: string,
+    duration: string,
+    active: bool,
+    artwork: image,
+    has-artwork: bool,
+    federated: bool,
+    liked: bool,
+}
+
+export struct QueueView {
+    key: string,
+    title: string,
+    artist: string,
+    artist-key: string,
+    release: string,
+    release-key: string,
+    active: bool,
+    artwork: image,
+    has-artwork: bool,
+}
+
+export struct PlaylistView {
+    id: string,
+    title: string,
+    details: string,
+    is-likes: bool,
+}
+
+export struct DeviceView {
+    id: string,
+    name: string,
+    details: string,
+    is-self: bool,
+    online: bool,
+    active: bool,
+    revoked: bool,
+}
+
+export struct PairingView {
+    request-id: string,
+    name: string,
+    details: string,
+    group-conflict: bool,
+}

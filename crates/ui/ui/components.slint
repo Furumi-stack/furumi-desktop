@@ -1,0 +1,702 @@
+import { ScrollView } from "std-widgets.slint";
+import { ArtistLinkLineView, ArtistLinkView, ArtistView, DeviceView, PlaylistView, ReleaseView, TrackView, VersionView } from "models.slint";
+export component IconButton inherits Rectangle {
+    in property <image> icon-source;
+    in property <brush> icon-color: transparent;
+    in property <string> tooltip;
+    in property <bool> enabled: true;
+    callback clicked;
+    width: 38px;
+    height: 38px;
+    border-radius: 19px;
+    opacity: root.enabled ? 1 : 0.32;
+    background: root.enabled && touch.has-hover ? #282c38 : transparent;
+    Image { source: root.icon-source; colorize: root.icon-color; width: 19px; height: 19px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+    touch := TouchArea { enabled: root.enabled; clicked => root.clicked(); }
+}
+
+export component DeviceRow inherits Rectangle {
+    in property <DeviceView> item;
+    in property <bool> selectable: false;
+    callback selected(string);
+    height: 48px;
+    border-radius: 7px;
+    opacity: item.revoked ? 0.45 : 1;
+    background: item.active ? #24483d : selectable && touch.has-hover ? #292e3a : transparent;
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 10px; spacing: 10px;
+        Rectangle {
+            width: 8px; background: transparent;
+            Rectangle {
+                width: 8px; height: 8px; border-radius: 4px;
+                y: (parent.height - self.height) / 2;
+                background: root.item.online ? #55dbaa : #555c6c;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1; alignment: center;
+            Text { text: root.item.name + (root.item.is-self ? " · this device" : ""); color: #e8eaf0; font-size: 12px; font-weight: 650; overflow: elide; }
+            Text { text: root.item.details; color: #757c8c; font-size: 10px; overflow: elide; }
+        }
+        if root.item.active: Text { text: "ACTIVE"; color: #55dbaa; font-size: 9px; font-weight: 750; vertical-alignment: center; }
+    }
+    touch := TouchArea { enabled: root.selectable; clicked => root.selected(root.item.id); }
+}
+
+export component FederationBadge inherits Rectangle {
+    in property <bool> partial: false;
+    width: 24px;
+    height: 18px;
+    border-radius: 5px;
+    background: root.partial ? @linear-gradient(90deg, #4bd4a1 0%, #4bd4a1 50%, #e1b84b 50%, #e1b84b 100%) : #4bd4a1;
+    Image {
+        source: @image-url("../assets/federation.svg");
+        width: 14px;
+        height: 14px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+}
+
+export component SearchField inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder-text;
+    callback edited(string);
+    forward-focus: input;
+    height: 38px;
+    border-radius: 19px;
+    background: #1b1e27;
+    border-width: 1px;
+    border-color: input.has-focus ? #697182 : #1b1e27;
+    clip: true;
+
+    TouchArea { clicked => input.focus(); }
+    Image {
+        source: @image-url("../assets/search.svg");
+        x: 14px;
+        y: (parent.height - self.height) / 2;
+        width: 17px;
+        height: 17px;
+    }
+    input-viewport := Rectangle {
+        x: 41px;
+        y: 1px;
+        width: parent.width - 54px;
+        height: parent.height - 2px;
+        background: transparent;
+        clip: true;
+        if input.text == "": Text {
+            text: root.placeholder-text;
+            color: #858c9c;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        input := TextInput {
+            private property <length> cursor-margin: 2px;
+            width: max(parent.width, self.preferred-width);
+            height: parent.height;
+            color: #e8eaf0;
+            font-size: 12px;
+            vertical-alignment: center;
+            single-line: true;
+            input-type: search;
+            selection-background-color: #52617a;
+            selection-foreground-color: #ffffff;
+            edited => root.edited(self.text);
+            cursor-position-changed(cursor-position) => {
+                if cursor-position.x + self.x < cursor-margin {
+                    self.x = -cursor-position.x + cursor-margin;
+                } else if cursor-position.x + self.x > parent.width - cursor-margin - self.text-cursor-width {
+                    self.x = parent.width - cursor-position.x - cursor-margin - self.text-cursor-width;
+                }
+            }
+        }
+    }
+}
+
+export component NavButton inherits Rectangle {
+    in property <string> label;
+    in property <image> icon-source;
+    in property <bool> active;
+    callback clicked;
+    height: 44px;
+    border-radius: 8px;
+    background: root.active ? #252936 : touch.has-hover ? #1a1d27 : transparent;
+    HorizontalLayout {
+        padding-left: 13px;
+        padding-right: 13px;
+        spacing: 12px;
+        Rectangle {
+            width: 19px;
+            background: transparent;
+            Image { source: root.icon-source; width: 19px; height: 19px; y: (parent.height - self.height) / 2; }
+        }
+        Text { text: root.label; color: root.active ? #ffffff : #b5bac8; font-size: 14px; font-weight: root.active ? 700 : 500; vertical-alignment: center; }
+    }
+    touch := TouchArea { clicked => root.clicked(); }
+}
+
+export component PlaylistNavButton inherits Rectangle {
+    in property <PlaylistView> item;
+    in property <bool> active;
+    callback clicked(string);
+    height: 34px;
+    border-radius: 6px;
+    background: root.active ? #252936 : touch.has-hover ? #1a1d27 : transparent;
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 8px; spacing: 9px;
+        Image {
+            source: root.item.is-likes ? @image-url("../assets/heart.svg") : @image-url("../assets/playlist-add.svg");
+            width: 15px; height: 15px;
+        }
+        Text { horizontal-stretch: 1; text: root.item.title; color: root.active ? #f5f6fa : #a4a9b7; font-size: 12px; overflow: elide; vertical-alignment: center; }
+    }
+    touch := TouchArea { clicked => root.clicked(root.item.id); }
+}
+
+export component MarqueeText inherits Rectangle {
+    in property <string> label;
+    in property <color> text-color: #858b9c;
+    in property <length> text-size: 11px;
+    in property <int> text-weight: 400;
+    private property <length> travel: max(0px, marquee-label.preferred-width - root.width);
+    private property <bool> scrolling: root.travel > 1px;
+    // Calling animation-tick() for text that already fits keeps the whole
+    // window repainting for no visual reason.
+    private property <duration> phase: root.scrolling ? mod(animation-tick(), 10s) : 0ms;
+    clip: true;
+    background: transparent;
+    marquee-label := Text {
+        x: !root.scrolling || root.phase < 1500ms ? 0px
+            : root.phase < 4500ms ? -root.travel * ((root.phase - 1500ms) / 3000ms)
+            : root.phase < 6000ms ? -root.travel
+            : root.phase < 9000ms ? -root.travel * (1 - ((root.phase - 6000ms) / 3000ms))
+            : 0px;
+        y: 0px;
+        width: self.preferred-width;
+        height: root.height;
+        text: root.label;
+        color: root.text-color;
+        font-size: root.text-size;
+        font-weight: root.text-weight;
+        vertical-alignment: center;
+        horizontal-alignment: left;
+    }
+}
+
+export component LinkText inherits Rectangle {
+    in property <string> label;
+    in property <color> base-color: #858b9c;
+    in property <length> text-size: 11px;
+    in property <int> text-weight: 400;
+    callback clicked;
+    height: 17px;
+    horizontal-stretch: 1;
+    background: transparent;
+    MarqueeText {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        label: root.label;
+        text-color: touch.has-hover ? #f1f2f6 : root.base-color;
+        text-size: root.text-size;
+        text-weight: root.text-weight;
+    }
+    touch := TouchArea { clicked => root.clicked(); }
+}
+
+export component InlineArtistLink inherits Text {
+    in property <string> key;
+    in property <color> base-color: #858b9c;
+    callback clicked(string);
+    color: touch.has-hover ? #f1f2f6 : root.base-color;
+    font-size: 11px;
+    vertical-alignment: center;
+    touch := TouchArea { clicked => root.clicked(root.key); }
+}
+
+export component ArtistLinksRow inherits Rectangle {
+    in property <[ArtistLinkView]> artists;
+    in property <string> leading-label;
+    in property <color> row-color: #858b9c;
+    in property <length> text-size: 11px;
+    in property <int> start-index: 0;
+    in property <int> end-index: artists.length;
+    in property <bool> animate-overflow: true;
+    callback open-artist(string);
+    height: 18px;
+    background: transparent;
+    clip: true;
+    private property <length> travel: max(0px, links.preferred-width - root.width);
+    private property <duration> phase: root.animate-overflow && root.travel > 1px ? mod(animation-tick(), 10s) : 0ms;
+    links := HorizontalLayout {
+        x: !root.animate-overflow || root.travel <= 1px || root.phase < 1500ms ? 0px
+            : root.phase < 4500ms ? -root.travel * ((root.phase - 1500ms) / 3000ms)
+            : root.phase < 6000ms ? -root.travel
+            : root.phase < 9000ms ? -root.travel * (1 - ((root.phase - 6000ms) / 3000ms))
+            : 0px;
+        y: 0px; width: max(root.width, self.preferred-width); height: root.height;
+        spacing: 0px; alignment: start;
+        if root.leading-label != "": Text { text: root.leading-label; color: root.row-color; font-size: root.text-size; vertical-alignment: center; }
+        for artist[index] in root.artists: HorizontalLayout {
+            visible: index >= root.start-index && index < root.end-index;
+            spacing: 0px;
+            if artist.prefix != "": Text {
+                text: index == root.start-index && artist.prefix == ", " ? ""
+                    : index == root.start-index && artist.prefix == " feat. " ? "feat. "
+                    : artist.prefix;
+                color: root.row-color; font-size: root.text-size; vertical-alignment: center;
+            }
+            InlineArtistLink {
+                key: artist.key; text: artist.name; base-color: root.row-color;
+                font-size: root.text-size; clicked(key) => root.open-artist(key);
+            }
+        }
+    }
+}
+
+export component TrackArtistsCell inherits Rectangle {
+    in property <[ArtistLinkView]> artists;
+    in property <string> label;
+    in property <int> line-break;
+    callback open-artist(string);
+    clip: true;
+    background: transparent;
+    private property <bool> use-two-lines: root.line-break > 0 && measure.preferred-width > root.width * 1.85;
+    measure := Text { visible: false; text: root.label; font-size: 11px; }
+    if !root.use-two-lines: ArtistLinksRow {
+        width: parent.width; height: parent.height;
+        artists: root.artists;
+        open-artist(key) => root.open-artist(key);
+    }
+    if root.use-two-lines: Rectangle {
+        x: 0px; y: 4px; width: parent.width; height: parent.height - 8px;
+        background: transparent; clip: true;
+        ArtistLinksRow {
+            x: 0px; y: 0px; width: parent.width; height: parent.height / 2;
+            artists: root.artists; end-index: root.line-break; animate-overflow: false;
+            open-artist(key) => root.open-artist(key);
+        }
+        ArtistLinksRow {
+            x: 0px; y: parent.height / 2; width: parent.width; height: parent.height / 2;
+            artists: root.artists; start-index: root.line-break; animate-overflow: false;
+            open-artist(key) => root.open-artist(key);
+        }
+    }
+}
+
+export component StaticArtistList inherits Rectangle {
+    in property <[ArtistLinkLineView]> lines;
+    in property <string> heading;
+    callback open-artist(string);
+    height: (heading == "" ? 0px : 20px) + lines.length * 19px;
+    background: transparent;
+    if root.heading != "": Text {
+        x: 0px; y: 0px; width: parent.width; height: 18px;
+        text: root.heading; color: #707687; font-size: 11px; vertical-alignment: center;
+    }
+    for line[index] in root.lines: Rectangle {
+        x: 0px;
+        y: (root.heading == "" ? 0px : 20px) + index * 19px;
+        width: parent.width;
+        height: 19px;
+        background: transparent;
+        HorizontalLayout {
+            spacing: 0px; alignment: start;
+            for artist in line.artists: HorizontalLayout {
+                spacing: 0px;
+                if artist.prefix != "": Text {
+                    text: artist.prefix; color: #858b9c; font-size: 11px; vertical-alignment: center;
+                }
+                InlineArtistLink {
+                    key: artist.key; text: artist.name; base-color: #858b9c;
+                    clicked(key) => root.open-artist(key);
+                }
+            }
+        }
+    }
+}
+
+export component TrackInfoArtists inherits Rectangle {
+    in property <[ArtistLinkView]> artists;
+    callback open-artist(string);
+    height: min(62px, max(28px, artists.length * 20px));
+    background: transparent;
+    Text { x: 0px; width: 112px; height: 28px; text: "Artists"; color: #707687; font-size: 11px; vertical-alignment: center; }
+    ScrollView {
+        x: 124px; width: parent.width - 124px; height: parent.height;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+        VerticalLayout {
+            spacing: 0px;
+            for artist in root.artists: Rectangle {
+                height: 20px; background: transparent;
+                Text {
+                    width: parent.width; height: parent.height;
+                    text: artist.name;
+                    color: artist-touch.has-hover ? #f1f2f6 : #dfe2ea;
+                    font-size: 11px; overflow: elide; vertical-alignment: center;
+                }
+                artist-touch := TouchArea { clicked => root.open-artist(artist.key); }
+            }
+        }
+    }
+}
+
+export component VersionRows inherits Rectangle {
+    in property <[VersionView]> items;
+    height: ceil(items.length / 2) * 21px;
+    background: transparent;
+    for item[index] in items: Rectangle {
+        x: mod(index, 2) * parent.width / 2;
+        y: floor(index / 2) * 21px;
+        width: parent.width / 2 - (mod(index, 2) == 0 ? 8px : 0px);
+        height: 21px;
+        background: transparent;
+        Text {
+            x: 0px; width: parent.width - 82px; height: parent.height;
+            text: item.name; color: #8f96a6; font-size: 10px;
+            overflow: elide; vertical-alignment: center;
+        }
+        Text {
+            x: parent.width - 78px; width: 78px; height: parent.height;
+            text: "v" + item.version; color: #d7dae3; font-size: 10px;
+            font-weight: 650; overflow: elide; horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component BuildInfoCard inherits Rectangle {
+    in property <[VersionView]> software;
+    in property <[VersionView]> protocols;
+    min-height: 82px + ceil(software.length / 2) * 21px + ceil(protocols.length / 2) * 21px;
+    max-height: 82px + ceil(software.length / 2) * 21px + ceil(protocols.length / 2) * 21px;
+    vertical-stretch: 0;
+    border-radius: 9px; background: #11151d; border-width: 1px; border-color: #2c3240;
+    VerticalLayout {
+        padding: 11px; spacing: 5px;
+        Text { height: 18px; text: "Build and compatibility"; color: #dfe2ea; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+        Text { height: 14px; text: "SOFTWARE"; color: #697080; font-size: 9px; font-weight: 750; letter-spacing: 0.7px; vertical-alignment: center; }
+        VersionRows { items: root.software; }
+        Text { height: 14px; text: "PROTOCOLS"; color: #697080; font-size: 9px; font-weight: 750; letter-spacing: 0.7px; vertical-alignment: center; }
+        VersionRows { items: root.protocols; }
+    }
+}
+
+export component AlbumTile inherits Rectangle {
+    in property <ReleaseView> item;
+    in property <bool> show-artist: true;
+    in property <bool> show-release-type: false;
+    callback play(string);
+    callback open(string);
+    callback open-artist(string);
+    private property <bool> hovered: touch.has-hover || play-touch.has-hover;
+    width: 154px;
+    height: 216px;
+    border-radius: 10px;
+    background: root.hovered ? #20242e : #171a22;
+    touch := TouchArea { clicked => root.open(item.key); }
+    VerticalLayout {
+        padding: 11px;
+        spacing: 9px;
+        cover := Rectangle {
+            height: 132px;
+            border-radius: 7px;
+            clip: true;
+            background: #292d38;
+            Image { source: @image-url("../assets/note.svg"); width: 44px; height: 44px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+            if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+            if item.federation-state > 0: FederationBadge { partial: item.federation-state == 2; x: parent.width - self.width - 4px; y: 4px; }
+            Rectangle {
+                x: 92px; y: 80px; width: 38px; height: 38px;
+                border-radius: 19px;
+                background: play-touch.has-hover ? #62e6b4 : #4bd4a1;
+                opacity: root.hovered ? 1 : 0;
+                Image { source: @image-url("../assets/play.svg"); width: 18px; height: 18px; x: 10px; y: 10px; }
+                play-touch := TouchArea { clicked => root.play(item.key); }
+            }
+        }
+        Text { text: item.title; color: #f4f5f8; font-size: 14px; font-weight: 700; overflow: elide; }
+        if root.show-artist: LinkText { label: item.artist + " · " + item.year; text-size: 12px; clicked => root.open-artist(item.artist-key); }
+        if !root.show-artist: Text {
+            height: 17px;
+            text: item.year + (root.show-release-type && item.release-type != "" ? " · " + item.release-type : "");
+            color: #858b9c; font-size: 12px; overflow: elide; vertical-alignment: center;
+        }
+    }
+}
+
+export component ArtistTile inherits Rectangle {
+    in property <ArtistView> item;
+    callback open(string);
+    width: 154px;
+    height: 210px;
+    border-radius: 10px;
+    background: touch.has-hover ? #20242e : #171a22;
+    VerticalLayout {
+        padding: 11px;
+        spacing: 9px;
+        Rectangle {
+            height: 132px;
+            border-radius: 66px;
+            clip: true;
+            background: #292d38;
+            Image { source: @image-url("../assets/note.svg"); width: 42px; height: 42px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+            if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+        }
+        Text { text: item.name; color: #f4f5f8; font-size: 14px; font-weight: 700; overflow: elide; }
+        Text { text: item.details; color: #858b9c; font-size: 11px; overflow: elide; }
+    }
+    touch := TouchArea { clicked => root.open(item.key); }
+}
+
+export component SearchArtistTile inherits Rectangle {
+    in property <ArtistView> item;
+    callback open(string);
+    width: 120px; height: 150px; border-radius: 8px;
+    background: touch.has-hover ? #20242e : #171a22;
+    VerticalLayout {
+        padding: 9px; spacing: 7px;
+        Rectangle {
+            height: 102px; border-radius: 10px; background: #292d38; clip: true;
+            Image { source: @image-url("../assets/note.svg"); width: 32px; height: 32px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+            if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+            if item.federated: FederationBadge { x: parent.width - self.width - 4px; y: 4px; }
+        }
+        Text { text: item.name; color: #f4f5f8; font-size: 12px; font-weight: 700; overflow: elide; }
+    }
+    touch := TouchArea { clicked => root.open(item.key); }
+}
+
+export component SearchReleaseTile inherits Rectangle {
+    in property <ReleaseView> item;
+    callback open(string);
+    width: 120px; height: 150px; border-radius: 8px;
+    background: touch.has-hover ? #20242e : #171a22;
+    VerticalLayout {
+        padding: 9px; spacing: 7px;
+        Rectangle {
+            height: 102px; border-radius: 5px; background: #292d38; clip: true;
+            Image { source: @image-url("../assets/note.svg"); width: 32px; height: 32px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+            if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+            if item.federation-state > 0: FederationBadge { partial: item.federation-state == 2; x: parent.width - self.width - 4px; y: 4px; }
+        }
+        Text { text: item.title; color: #f4f5f8; font-size: 12px; font-weight: 700; overflow: elide; }
+    }
+    touch := TouchArea { clicked => root.open(item.key); }
+}
+
+export component SearchArtistGrid inherits Rectangle {
+    in property <[ArtistView]> artists;
+    callback open(string);
+    property <int> columns: max(1, floor((self.width + 12px) / 132px));
+    height: artists.length > 0 ? ceil(artists.length / columns) * 162px - 12px : 0px;
+    for artist[index] in artists: SearchArtistTile { x: mod(index, root.columns) * 132px; y: floor(index / root.columns) * 162px; item: artist; open(key) => root.open(key); }
+}
+
+export component SearchReleaseGrid inherits Rectangle {
+    in property <[ReleaseView]> releases;
+    callback open(string);
+    property <int> columns: max(1, floor((self.width + 12px) / 132px));
+    height: releases.length > 0 ? ceil(releases.length / columns) * 162px - 12px : 0px;
+    for release[index] in releases: SearchReleaseTile { x: mod(index, root.columns) * 132px; y: floor(index / root.columns) * 162px; item: release; open(key) => root.open(key); }
+}
+
+export component TrackActionButton inherits Rectangle {
+    in property <image> icon-source;
+    in property <bool> active: false;
+    callback clicked;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: root.active ? #255845 : touch.has-hover ? #353a47 : transparent;
+    Image { source: root.icon-source; width: 16px; height: 16px; x: 6px; y: 6px; }
+    touch := TouchArea { clicked => root.clicked(); }
+}
+
+export component TrackMenuItem inherits Rectangle {
+    in property <image> icon-source;
+    in property <string> label;
+    callback clicked;
+    height: 34px;
+    border-radius: 5px;
+    background: touch.has-hover ? #303541 : transparent;
+    HorizontalLayout {
+        padding-left: 9px; padding-right: 9px; spacing: 9px;
+        Rectangle {
+            width: 16px; background: transparent;
+            Image { source: root.icon-source; width: 16px; height: 16px; y: (parent.height - self.height) / 2; }
+        }
+        Text { text: root.label; color: #d9dce5; font-size: 11px; vertical-alignment: center; }
+    }
+    touch := TouchArea { clicked => root.clicked(); }
+}
+
+export component InfoField inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    height: 28px;
+    background: transparent;
+    HorizontalLayout {
+        spacing: 12px;
+        Text { width: 112px; text: root.label; color: #707687; font-size: 11px; vertical-alignment: center; }
+        Text { horizontal-stretch: 1; text: root.value == "" ? "—" : root.value; color: #dfe2ea; font-size: 11px; overflow: elide; vertical-alignment: center; }
+    }
+}
+
+export component TrackRow inherits Rectangle {
+    in property <TrackView> item;
+    in property <bool> show-artwork: false;
+    callback play(string);
+    callback action(string, string);
+    callback open-artist(string);
+    callback open-release(string);
+    height: 48px;
+    border-radius: 6px;
+    background: item.active ? #282d3a : touch.has-hover ? #20242e : transparent;
+    touch := TouchArea { double-clicked => root.play(item.key); }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        Text { text: item.number; color: #777d8d; width: 24px; vertical-alignment: center; horizontal-alignment: center; }
+        if root.show-artwork: Rectangle {
+            width: 34px; height: 34px; border-radius: 4px; background: #292d38; clip: true;
+            Image { source: @image-url("../assets/note.svg"); width: 18px; height: 18px; x: 8px; y: 8px; }
+            if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            height: parent.height;
+            background: transparent;
+            clip: true;
+            Rectangle {
+                x: 0px; width: parent.width * 0.40; height: parent.height; background: transparent; clip: true;
+                Text {
+                    x: 0px; y: 0px;
+                    // Keep identical text geometry for local and federated
+                    // rows. The badge is an overlay at the trailing edge.
+                    width: parent.width - 34px; height: parent.height;
+                    text: item.title;
+                    color: item.active ? #55dbaa : #f1f2f6;
+                    font-size: 13px; font-weight: 600; overflow: elide;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                }
+                if item.federated: FederationBadge {
+                    x: parent.width - self.width - 8px;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+            Rectangle {
+                x: parent.width * 0.40; width: parent.width * 0.30; height: parent.height; background: transparent; clip: true;
+                TrackArtistsCell {
+                    x: 0px; y: 0px; width: parent.width - 12px; height: parent.height;
+                    artists: item.artists; label: item.artists-label;
+                    line-break: item.artist-line-break;
+                    open-artist(key) => root.open-artist(key);
+                }
+            }
+            Rectangle {
+                x: parent.width * 0.70; width: parent.width * 0.30; height: parent.height; background: transparent; clip: true;
+                LinkText { x: 0px; y: 0px; width: parent.width - 8px; height: parent.height; label: item.release; base-color: #949aaa; text-size: 12px; clicked => root.open-release(item.release-key); }
+            }
+        }
+        Text { text: item.duration; color: #949aaa; width: 46px; font-size: 12px; horizontal-alignment: right; vertical-alignment: center; }
+        Rectangle {
+            width: 124px;
+            background: transparent;
+            TrackActionButton { x: 0px; y: (parent.height - self.height) / 2; active: root.item.liked; icon-source: @image-url("../assets/heart.svg"); clicked => root.action("like", root.item.key); }
+            TrackActionButton { x: 32px; y: (parent.height - self.height) / 2; icon-source: @image-url("../assets/play-next.svg"); clicked => root.action("play-next", root.item.key); }
+            TrackActionButton { x: 64px; y: (parent.height - self.height) / 2; icon-source: @image-url("../assets/add-end.svg"); clicked => root.action("add-end", root.item.key); }
+            TrackActionButton { x: 96px; y: (parent.height - self.height) / 2; icon-source: @image-url("../assets/more.svg"); clicked => { menu.show(); } }
+        }
+    }
+    menu := PopupWindow {
+        x: root.width - self.width - 8px;
+        y: 42px;
+        width: 184px;
+        height: 118px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            border-radius: 8px;
+            background: #222631;
+            border-color: #3a3f4d;
+            border-width: 1px;
+            drop-shadow-color: #00000080;
+            drop-shadow-blur: 14px;
+            drop-shadow-offset-y: 4px;
+            VerticalLayout {
+                padding: 6px; spacing: 1px;
+                TrackMenuItem { icon-source: @image-url("../assets/info.svg"); label: "Track information"; clicked => { menu.close(); root.action("information", root.item.key); } }
+                TrackMenuItem { icon-source: @image-url("../assets/share.svg"); label: "Share"; clicked => { menu.close(); root.action("share", root.item.key); } }
+                TrackMenuItem { icon-source: @image-url("../assets/playlist-add.svg"); label: "Add to playlist"; clicked => { menu.close(); root.action("playlist", root.item.key); } }
+            }
+        }
+    }
+}
+
+export component TrackList inherits Rectangle {
+    in property <[TrackView]> tracks;
+    in property <bool> show-artwork: false;
+    callback play(string);
+    callback action(string, string);
+    callback open-artist(string);
+    callback open-release(string);
+    property <length> content-height: tracks.length > 0 ? tracks.length * 50px - 2px : 0px;
+    min-height: content-height;
+    preferred-height: content-height;
+    max-height: content-height;
+    vertical-stretch: 0;
+    background: transparent;
+    for track[index] in tracks: TrackRow {
+        x: 0px; y: index * 50px; width: root.width;
+        item: track;
+        show-artwork: root.show-artwork;
+        play(key) => root.play(key);
+        action(action, key) => root.action(action, key);
+        open-artist(key) => root.open-artist(key);
+        open-release(key) => root.open-release(key);
+    }
+}
+
+export component AlbumGrid inherits Rectangle {
+    in property <[ReleaseView]> releases;
+    in property <bool> show-artists: true;
+    in property <bool> show-release-types: false;
+    callback play(string);
+    callback open(string);
+    callback open-artist(string);
+    property <int> fitting-column-count: max(1, floor((self.width + 13px) / 167px));
+    property <int> column-count: releases.length > 0 && releases.length < fitting-column-count ? releases.length : fitting-column-count;
+    property <length> column-gap: column-count > 1 ? min(25px, max(13px, (self.width - column-count * 154px) / (column-count - 1))) : 0px;
+    height: releases.length > 0 ? ceil(releases.length / column-count) * 229px - 13px : 0px;
+    background: transparent;
+
+    for release[index] in releases: AlbumTile {
+        x: mod(index, root.column-count) * (154px + root.column-gap);
+        y: floor(index / root.column-count) * 229px;
+        item: release;
+        show-artist: root.show-artists;
+        show-release-type: root.show-release-types;
+        play(key) => root.play(key);
+        open(key) => root.open(key);
+        open-artist(key) => root.open-artist(key);
+    }
+}
+
+export component ArtistGrid inherits Rectangle {
+    in property <[ArtistView]> artists;
+    callback open(string);
+    property <int> fitting-column-count: max(1, floor((self.width + 13px) / 167px));
+    property <int> column-count: artists.length > 0 && artists.length < fitting-column-count ? artists.length : fitting-column-count;
+    property <length> column-gap: column-count > 1 ? min(25px, max(13px, (self.width - column-count * 154px) / (column-count - 1))) : 0px;
+    height: artists.length > 0 ? ceil(artists.length / column-count) * 223px - 13px : 0px;
+    background: transparent;
+    for artist[index] in artists: ArtistTile {
+        x: mod(index, root.column-count) * (154px + root.column-gap);
+        y: floor(index / root.column-count) * 223px;
+        item: artist;
+        open(key) => root.open(key);
+    }
+}

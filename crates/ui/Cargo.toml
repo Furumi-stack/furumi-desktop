@@ -1,0 +1,23 @@
+[package]
+name = "furumi-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+furumi-application.workspace = true
+furumi-backend.workspace = true
+furumi-backend-api.workspace = true
+furumi-domain.workspace = true
+furumi-platform-desktop.workspace = true
+image.workspace = true
+slint.workspace = true
+tokio.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true
+
+[lints]
+workspace = true
