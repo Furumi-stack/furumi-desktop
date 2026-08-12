@@ -2175,6 +2175,9 @@ name = "furumi-platform-desktop"
 version = "0.1.0"
 dependencies = [
  "core-foundation 0.10.1",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "rfd",
  "souvlaki",
  "windows-sys 0.61.2",

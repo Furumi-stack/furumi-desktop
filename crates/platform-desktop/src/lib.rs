@@ -2,7 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
+mod app;
 mod media;
+pub use app::set_application_icon;
 pub use media::{MediaCommand, MediaSession};
 
 /// Opens the platform-native directory picker.

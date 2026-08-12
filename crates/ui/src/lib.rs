@@ -50,6 +50,13 @@ pub fn run(backend: &BackendHandle) -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
     let state = Arc::new(Mutex::new(AppState::default()));
 
+    // Winit completes NSApplication initialization only after entering the
+    // event loop. AppKit discards a Dock icon assigned before that point.
+    #[cfg(target_os = "macos")]
+    slint::Timer::single_shot(std::time::Duration::ZERO, || {
+        furumi_platform_desktop::set_application_icon();
+    });
+
     let media_backend = backend.clone();
     MEDIA_SESSION.with_borrow_mut(|session| {
         *session = MediaSession::new(move |command| {
