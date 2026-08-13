@@ -10,6 +10,7 @@ pkgs.mkShell {
   ];
 
   buildInputs = with pkgs; [
+    alsa-lib
     fontconfig
     freetype
     libxkbcommon
@@ -22,6 +23,7 @@ pkgs.mkShell {
   ];
 
   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (with pkgs; [
+    alsa-lib
     fontconfig
     freetype
     libxkbcommon
@@ -35,4 +37,3 @@ pkgs.mkShell {
 
   RUST_BACKTRACE = "1";
 }
-
