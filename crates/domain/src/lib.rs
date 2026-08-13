@@ -326,6 +326,7 @@ pub struct Queue {
     items: Vec<QueueItem>,
     current: Option<usize>,
     play_next_end: Option<usize>,
+    original_order: Option<Vec<TrackKey>>,
     next_item_id: u64,
 }
 
@@ -360,6 +361,7 @@ impl Queue {
         self.items = items;
         self.current = (!self.items.is_empty()).then(|| start.min(self.items.len() - 1));
         self.play_next_end = None;
+        self.original_order = None;
     }
 
     pub fn add_to_end(&mut self, tracks: impl IntoIterator<Item = Track>) {
@@ -423,6 +425,87 @@ impl Queue {
         self.current = Some(previous);
         self.normalize_play_next_block();
         self.current()
+    }
+
+    /// Selects a position directly, preserving the existing queue context.
+    pub fn select_index(&mut self, index: usize) -> Option<&QueueItem> {
+        if index >= self.items.len() {
+            return None;
+        }
+        self.current = Some(index);
+        self.play_next_end = None;
+        self.current()
+    }
+
+    /// Randomizes only the part of the queue that has not played yet.
+    ///
+    /// The original order is retained so disabling shuffle can restore it.
+    pub fn shuffle_upcoming(&mut self) {
+        let start = self
+            .current
+            .map_or(0, |current| (current + 1).min(self.items.len()));
+        if self.items.len().saturating_sub(start) < 2 {
+            return;
+        }
+        if self.original_order.is_none() {
+            self.remember_order();
+        }
+        let mut seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |duration| {
+                duration.as_secs() ^ u64::from(duration.subsec_nanos())
+            })
+            | 1;
+        let mut random = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let tail = &mut self.items[start..];
+        for index in (1..tail.len()).rev() {
+            let bound = u64::try_from(index + 1).unwrap_or(u64::MAX);
+            let shuffled = usize::try_from(random() % bound).unwrap_or(0);
+            tail.swap(index, shuffled);
+        }
+        self.play_next_end = None;
+    }
+
+    /// Remembers the current catalog order before another device sends a
+    /// physically shuffled queue through the connected-devices protocol.
+    pub fn remember_order(&mut self) {
+        if self.original_order.is_none() {
+            self.original_order = Some(
+                self.items
+                    .iter()
+                    .map(|item| item.track.key.clone())
+                    .collect(),
+            );
+        }
+    }
+
+    /// Replaces a synchronized queue without losing its pre-shuffle order.
+    pub fn replace_shuffled_context(&mut self, tracks: Vec<Track>, start: usize) {
+        let original_order = self.original_order.take();
+        self.replace_context(tracks, start);
+        self.original_order = original_order;
+    }
+
+    /// Restores the unplayed queue tail to its order before shuffle.
+    pub fn restore_upcoming_order(&mut self) {
+        let Some(order) = self.original_order.take() else {
+            return;
+        };
+        let start = self
+            .current
+            .map_or(0, |current| (current + 1).min(self.items.len()));
+        self.items[start..].sort_by_key(|item| {
+            order
+                .iter()
+                .position(|original| original.matches(&item.track.key))
+                .unwrap_or(usize::MAX)
+        });
+        self.play_next_end = None;
     }
 
     fn new_item(&mut self, track: Track) -> QueueItem {
@@ -504,6 +587,31 @@ mod tests {
             queue.current().unwrap().track.key.local_id().unwrap().get(),
             12
         );
+    }
+
+    #[test]
+    fn shuffle_preserves_current_track_and_can_restore_the_tail() {
+        let mut queue = Queue::default();
+        queue.replace_context((1..=8).map(track).collect(), 2);
+        let current = queue.current().unwrap().id;
+
+        queue.shuffle_upcoming();
+
+        assert_eq!(queue.current().unwrap().id, current);
+        let mut shuffled_tail: Vec<_> = queue.items()[3..]
+            .iter()
+            .map(|item| item.track.key.local_id().unwrap().get())
+            .collect();
+        shuffled_tail.sort_unstable();
+        assert_eq!(shuffled_tail, vec![4, 5, 6, 7, 8]);
+
+        queue.restore_upcoming_order();
+        let restored: Vec<_> = queue
+            .items()
+            .iter()
+            .map(|item| item.track.key.local_id().unwrap().get())
+            .collect();
+        assert_eq!(restored, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]

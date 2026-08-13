@@ -100,6 +100,9 @@ export component AppWindow inherits Window {
     in property <string> duration;
     in property <float> progress;
     in property <float> volume;
+    in property <bool> shuffle-enabled;
+    // 0 = off, 1 = current track, 2 = entire queue.
+    in property <int> repeat-mode;
     in property <string> error-message;
 
     callback navigate(string);
@@ -114,6 +117,8 @@ export component AppWindow inherits Window {
     callback toggle-playback;
     callback next;
     callback previous;
+    callback toggle-shuffle;
+    callback cycle-repeat;
     callback seek(float);
     callback set-volume(float);
     callback play-release(string);
@@ -414,26 +419,34 @@ export component AppWindow inherits Window {
                         IconButton { icon-source: @image-url("../assets/close.svg"); clicked => root.toggle-queue(); }
                     }
                     Text { text: "Now playing and up next"; color: #777d8d; font-size: 11px; }
-                    VerticalLayout {
-                        spacing: 4px;
-                        for item in root.queue-items: Rectangle {
-                            height: 52px; border-radius: 7px; background: item.active ? #242a35 : transparent;
-                            TouchArea { double-clicked => root.play-queue-item(item.key); }
-                            HorizontalLayout {
-                                padding: 7px; spacing: 10px;
-                                Rectangle { width: 38px; height: 38px; border-radius: 5px; background: #292d38; Image { source: @image-url("../assets/note.svg"); width: 21px; height: 21px; x: 8px; y: 8px; } if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; } }
-                                Rectangle {
-                                    width: 190px; height: parent.height; background: transparent; clip: true;
-                                    VerticalLayout {
-                                        x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center;
-                                        MarqueeText { width: parent.width; height: 18px; label: item.title; text-color: item.active ? #55dbaa : #e7e9ef; text-size: 12px; text-weight: 600; }
-                                        LinkText { width: parent.width; label: item.artist; base-color: #777d8d; text-size: 10px; height: 15px; clicked => root.open-artist(item.artist-key); }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        min-height: 0px;
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width;
+                            spacing: 4px;
+                            alignment: start;
+                            for item in root.queue-items: Rectangle {
+                                height: 52px; border-radius: 7px; background: item.active ? #242a35 : transparent;
+                                TouchArea { double-clicked => root.play-queue-item(item.key); }
+                                HorizontalLayout {
+                                    padding: 7px; spacing: 10px;
+                                    Rectangle { width: 38px; height: 38px; border-radius: 5px; background: #292d38; Image { source: @image-url("../assets/note.svg"); width: 21px; height: 21px; x: 8px; y: 8px; } if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; } }
+                                    Rectangle {
+                                        width: 190px; height: parent.height; background: transparent; clip: true;
+                                        VerticalLayout {
+                                            x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center;
+                                            MarqueeText { width: parent.width; height: 18px; label: item.title; text-color: item.active ? #55dbaa : #e7e9ef; text-size: 12px; text-weight: 600; }
+                                            LinkText { width: parent.width; label: item.artist; base-color: #777d8d; text-size: 10px; height: 15px; clicked => root.open-artist(item.artist-key); }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                    Rectangle { vertical-stretch: 1; background: transparent; }
                 }
             }
         }
@@ -444,10 +457,7 @@ export component AppWindow inherits Window {
             border-color: #282b35;
             border-width: 1px;
             HorizontalLayout {
-                padding-left: 18px; padding-right: 18px; padding-top: 12px; padding-bottom: 10px;
-                spacing: 18px;
-                HorizontalLayout {
-                    width: 260px; spacing: 11px;
+                x: 18px; y: 12px; width: 260px; height: 68px; spacing: 11px;
                     Rectangle {
                         width: 54px; height: 54px; border-radius: 6px; background: #292d38; clip: true;
                         Image { source: @image-url("../assets/note.svg"); width: 28px; height: 28px; x: 13px; y: 13px; }
@@ -461,11 +471,24 @@ export component AppWindow inherits Window {
                         ArtistLinksRow { width: 195px; height: 16px; artists: root.current-artists; row-color: #818797; open-artist(key) => root.open-artist(key); }
                         Text { width: 195px; text: root.current-metadata; color: #656b7b; font-size: 10px; overflow: elide; vertical-alignment: center; }
                     }
-                }
+            }
+            Rectangle {
+                // Keep transport controls at the true center of the window.
+                // The bar grows on compact windows but stops at a comfortable width.
+                width: min(560px, max(320px, parent.width - 570px));
+                height: 68px;
+                x: (parent.width - self.width) / 2;
+                y: 10px;
+                background: transparent;
                 VerticalLayout {
-                    horizontal-stretch: 1; spacing: 7px;
+                    spacing: 7px;
                     HorizontalLayout {
                         alignment: center; spacing: 8px;
+                        IconButton {
+                            icon-source: @image-url("../assets/shuffle.svg");
+                            icon-color: root.shuffle-enabled ? #e58bd7 : transparent;
+                            clicked => root.toggle-shuffle();
+                        }
                         IconButton { icon-source: @image-url("../assets/previous.svg"); clicked => root.previous(); }
                         Rectangle {
                             width: 42px; height: 42px; border-radius: 21px; background: #f4f5f8;
@@ -474,6 +497,22 @@ export component AppWindow inherits Window {
                             TouchArea { clicked => root.toggle-playback(); }
                         }
                         IconButton { icon-source: @image-url("../assets/next.svg"); clicked => root.next(); }
+                        Rectangle {
+                            width: 38px; height: 38px; background: transparent;
+                            IconButton {
+                                icon-source: @image-url("../assets/repeat.svg");
+                                icon-color: root.repeat-mode != 0 ? #e58bd7 : transparent;
+                                clicked => root.cycle-repeat();
+                            }
+                            if root.repeat-mode == 1: Rectangle {
+                                x: 24px; y: 23px; width: 12px; height: 12px; border-radius: 6px;
+                                background: #11131a;
+                                Text {
+                                    text: "1"; color: #e58bd7; font-size: 8px; font-weight: 800;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+                        }
                     }
                     HorizontalLayout {
                         spacing: 9px;
@@ -482,8 +521,9 @@ export component AppWindow inherits Window {
                         Text { text: root.duration; color: #818797; font-size: 10px; width: 34px; vertical-alignment: center; }
                     }
                 }
-                Rectangle {
-                    width: 238px; background: transparent;
+            }
+            Rectangle {
+                    x: parent.width - 256px; y: 12px; width: 238px; height: 68px; background: transparent;
                     IconButton { x: 0px; y: (parent.height - self.height) / 2; icon-source: @image-url("../assets/queue.svg"); clicked => root.toggle-queue(); }
                     Image { x: 48px; y: (parent.height - self.height) / 2; source: @image-url("../assets/volume.svg"); width: 18px; height: 18px; }
                     Slider { x: 75px; y: (parent.height - self.height) / 2; width: 100px; height: 18px; minimum: 0; maximum: 1; value: root.volume; changed(value) => root.set-volume(value); }
@@ -562,7 +602,6 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
-                }
             }
         }
     }

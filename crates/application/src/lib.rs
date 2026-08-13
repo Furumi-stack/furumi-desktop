@@ -1,6 +1,8 @@
 //! Deterministic frontend state, reducers and UI projections.
 
-use furumi_backend_api::{BackendCommand, BackendSnapshot, PlaybackStatus, RequestId};
+use furumi_backend_api::{
+    BackendCommand, BackendSnapshot, PlaybackRepeat, PlaybackStatus, RequestId,
+};
 use furumi_domain::{ArtistKey, QueueItemId, ReleaseKey, TrackKey};
 use std::time::Duration;
 
@@ -105,6 +107,8 @@ pub enum UiAction {
     TogglePlayback,
     Next,
     Previous,
+    ToggleShuffle,
+    CycleRepeat,
     Seek(f64),
     SetVolume(f32),
     PlayRelease {
@@ -258,6 +262,8 @@ pub fn reduce_action(state: &mut AppState, action: UiAction) -> Vec<Effect> {
         UiAction::TogglePlayback => send(BackendCommand::TogglePlayback),
         UiAction::Next => send(BackendCommand::Next),
         UiAction::Previous => send(BackendCommand::Previous),
+        UiAction::ToggleShuffle => send(BackendCommand::ToggleShuffle),
+        UiAction::CycleRepeat => send(BackendCommand::CycleRepeat),
         UiAction::Seek(position_seconds) => send(BackendCommand::Seek { position_seconds }),
         UiAction::SetVolume(volume) => send(BackendCommand::SetVolume { volume }),
         UiAction::PlayRelease { release_id, start } => {
@@ -433,6 +439,8 @@ pub struct PlayerProjection {
     pub duration: String,
     pub progress: f32,
     pub volume: f32,
+    pub shuffle: bool,
+    pub repeat: PlaybackRepeat,
 }
 
 impl AppState {
@@ -450,6 +458,8 @@ impl AppState {
             duration: duration_label(duration),
             progress: progress_ratio(elapsed, duration),
             volume: self.backend.playback.volume,
+            shuffle: self.backend.playback.shuffle,
+            repeat: self.backend.playback.repeat,
         }
     }
 }

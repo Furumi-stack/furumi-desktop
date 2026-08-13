@@ -1,0 +1,197 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_name: furumi-desktop-linux-x86_64
+            archive_ext: tar.gz
+            binary_name: furumi-desktop
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset_name: furumi-desktop-macos-aarch64
+            archive_ext: tar.gz
+            binary_name: furumi-desktop
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_name: furumi-desktop-windows-x86_64
+            archive_ext: zip
+            binary_name: furumi-desktop.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libgl1-mesa-dev \
+            libudev-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev \
+            pkg-config
+
+      - name: Install Rust target
+        shell: bash
+        run: rustup target add "${{ matrix.target }}"
+
+      - name: Show Rust version
+        shell: bash
+        run: |
+          rustc --version --verbose
+          cargo --version
+
+      - name: Fetch locked dependencies
+        shell: bash
+        run: cargo fetch --locked --target "${{ matrix.target }}"
+
+      - name: Build desktop application
+        shell: bash
+        run: |
+          cargo build \
+            --release \
+            --locked \
+            --offline \
+            --package furumi-desktop \
+            --target "${{ matrix.target }}"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          archive_name="${{ matrix.asset_name }}-${version}.${{ matrix.archive_ext }}"
+          package_dir="dist/${{ matrix.asset_name }}"
+          binary="target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+
+          mkdir -p "$package_dir"
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            app_dir="$package_dir/Furumi Desktop.app"
+            mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
+            cp "$binary" "$app_dir/Contents/MacOS/furumi-desktop"
+            iconset="$RUNNER_TEMP/furumi.iconset"
+            mkdir -p "$iconset"
+            sips -s format png -z 16 16 crates/ui/assets/federation.svg --out "$iconset/icon_16x16.png" >/dev/null
+            sips -s format png -z 32 32 crates/ui/assets/federation.svg --out "$iconset/icon_16x16@2x.png" >/dev/null
+            sips -s format png -z 32 32 crates/ui/assets/federation.svg --out "$iconset/icon_32x32.png" >/dev/null
+            sips -s format png -z 64 64 crates/ui/assets/federation.svg --out "$iconset/icon_32x32@2x.png" >/dev/null
+            sips -s format png -z 128 128 crates/ui/assets/federation.svg --out "$iconset/icon_128x128.png" >/dev/null
+            sips -s format png -z 256 256 crates/ui/assets/federation.svg --out "$iconset/icon_128x128@2x.png" >/dev/null
+            sips -s format png -z 256 256 crates/ui/assets/federation.svg --out "$iconset/icon_256x256.png" >/dev/null
+            sips -s format png -z 512 512 crates/ui/assets/federation.svg --out "$iconset/icon_256x256@2x.png" >/dev/null
+            sips -s format png -z 512 512 crates/ui/assets/federation.svg --out "$iconset/icon_512x512.png" >/dev/null
+            sips -s format png -z 1024 1024 crates/ui/assets/federation.svg --out "$iconset/icon_512x512@2x.png" >/dev/null
+            iconutil -c icns "$iconset" -o "$app_dir/Contents/Resources/furumi.icns"
+            cat > "$app_dir/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleDisplayName</key>
+            <string>Furumi Desktop</string>
+            <key>CFBundleExecutable</key>
+            <string>furumi-desktop</string>
+            <key>CFBundleIdentifier</key>
+            <string>cy.hexor.furumi-desktop</string>
+            <key>CFBundleIconFile</key>
+            <string>furumi.icns</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>Furumi Desktop</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${version}</string>
+            <key>CFBundleVersion</key>
+            <string>${GITHUB_RUN_NUMBER}</string>
+            <key>LSApplicationCategoryType</key>
+            <string>public.app-category.music</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>11.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+            plutil -lint "$app_dir/Contents/Info.plist"
+            codesign --force --deep --sign - "$app_dir"
+            codesign --verify --deep --strict "$app_dir"
+          else
+            cp "$binary" "$package_dir/"
+          fi
+          cp README.md "$package_dir/"
+          cp LICENSE "$package_dir/"
+
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            (cd dist && 7z a "../${archive_name}" "${{ matrix.asset_name }}")
+          else
+            tar -C dist -czf "$archive_name" "${{ matrix.asset_name }}"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}-*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release assets
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          gh release create "$RELEASE_TAG" artifacts/*/* \
+            --title "furumi-desktop ${RELEASE_TAG}" \
+            --generate-notes \
+            --verify-tag

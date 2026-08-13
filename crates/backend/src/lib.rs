@@ -11,8 +11,9 @@ use furumi_backend_api::{
     BackendCommand, BackendSnapshot, BuildInfoSnapshot, ConnectedDeviceSnapshot,
     ConnectedDevicesSnapshot, DevicePlaybackRole, DevicePresence, DeviceTrust,
     FederationActivitySnapshot, FederationDebugSnapshot, FederationOperation, LibrarySnapshot,
-    PendingPairingSnapshot, PlaybackStatus, PlaylistSnapshot, RemoteData, RequestId, SearchResults,
-    SearchSnapshot, SearchStats, SendCommandError, SettingsSnapshot, VersionEntrySnapshot,
+    PendingPairingSnapshot, PlaybackRepeat, PlaybackStatus, PlaylistSnapshot, RemoteData,
+    RequestId, SearchResults, SearchSnapshot, SearchStats, SendCommandError, SettingsSnapshot,
+    VersionEntrySnapshot,
 };
 use furumi_domain::{
     Artist, ArtistId, ArtistKey, ArtistRef, Artwork, AudioSource, CatalogSource, ContentId,
@@ -688,9 +689,25 @@ impl Actor {
                 }
                 self.publish();
             }
+            BackendCommand::ToggleShuffle => {
+                self.state.playback.shuffle = !self.state.playback.shuffle;
+                if self.state.playback.shuffle {
+                    self.state.queue.shuffle_upcoming();
+                } else {
+                    self.state.queue.restore_upcoming_order();
+                }
+                self.send_control_state(false);
+                self.publish();
+            }
+            BackendCommand::CycleRepeat => {
+                self.state.playback.repeat = self.state.playback.repeat.next();
+                self.send_control_state(false);
+                self.publish();
+            }
             BackendCommand::PlayRelease { release_id, start } => {
                 if let Some(release) = self.release(&release_id).cloned() {
                     self.state.queue.replace_context(release.tracks, start);
+                    self.shuffle_new_context();
                     self.resolve_queue_artwork();
                     self.play_current();
                 }
@@ -698,6 +715,7 @@ impl Actor {
             BackendCommand::PlayTrack { track } => {
                 if let Some(track) = self.track(&track).cloned() {
                     self.state.queue.replace_context(vec![track], 0);
+                    self.shuffle_new_context();
                     self.resolve_queue_artwork();
                     self.play_current();
                 }
@@ -712,6 +730,7 @@ impl Actor {
                 if !tracks.is_empty() {
                     let start = selected_track_position(&tracks, &selected);
                     self.state.queue.replace_context(tracks, start);
+                    self.shuffle_new_context();
                     self.resolve_queue_artwork();
                     self.play_current();
                 }
@@ -808,7 +827,7 @@ impl Actor {
                 self.select_playback_device(&device_id);
             }
             BackendCommand::Next => {
-                if self.state.queue.advance().is_some() {
+                if self.advance_queue(false) {
                     self.play_current();
                 }
             }
@@ -1427,7 +1446,7 @@ impl Actor {
             }
             audio::Event::Finished => {
                 self.remove_ephemeral_audio();
-                if self.state.queue.advance().is_some() {
+                if self.advance_queue(true) {
                     self.play_current();
                 } else {
                     self.state.playback.status = PlaybackStatus::Stopped;
@@ -1474,6 +1493,23 @@ impl Actor {
             }
         }
         self.publish();
+    }
+
+    fn shuffle_new_context(&mut self) {
+        if self.state.playback.shuffle {
+            self.state.queue.shuffle_upcoming();
+        }
+    }
+
+    fn advance_queue(&mut self, natural_finish: bool) -> bool {
+        if natural_finish && self.state.playback.repeat == PlaybackRepeat::One {
+            return self.state.queue.current().is_some();
+        }
+        if self.state.queue.advance().is_some() {
+            return true;
+        }
+        self.state.playback.repeat == PlaybackRepeat::All
+            && self.state.queue.select_index(0).is_some()
     }
 
     fn start_federated_playback(&mut self, track: Track, peer_id: String, content_id: ContentId) {

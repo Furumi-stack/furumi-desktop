@@ -770,6 +770,12 @@ pub(super) fn render_playback(window: &AppWindow, state: &AppState) {
     window.set_duration(player.duration.into());
     window.set_progress(player.progress);
     window.set_volume(player.volume);
+    window.set_shuffle_enabled(player.shuffle);
+    window.set_repeat_mode(match player.repeat {
+        PlaybackRepeat::Off => 0,
+        PlaybackRepeat::One => 1,
+        PlaybackRepeat::All => 2,
+    });
 }
 
 pub(super) fn render_current_track(window: &AppWindow, state: &AppState) {

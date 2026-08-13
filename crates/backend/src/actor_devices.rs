@@ -265,8 +265,8 @@ impl Actor {
                 .then_some(unix_time_ms()),
             position_secs: self.state.playback.position_seconds,
             volume: volume_percent(self.state.playback.volume),
-            shuffle: false,
-            repeat: music_dht::device_sync::PlaybackRepeat::Off,
+            shuffle: self.state.playback.shuffle,
+            repeat: repeat_to_wire(self.state.playback.repeat),
         }
     }
 
@@ -311,16 +311,39 @@ impl Actor {
         start_audio: bool,
         seek: bool,
     ) {
+        let previous_status = self.state.playback.status;
+        let previous_index = self.state.queue.current_index();
+        let previous_track = self
+            .state
+            .queue
+            .current()
+            .map(|item| item.track.key.clone());
         let tracks = wire
             .queue
             .iter()
             .filter_map(|track| self.resolve_playback_track(track))
             .collect::<Vec<_>>();
         if !tracks.is_empty() {
-            self.state.queue.replace_context(tracks, wire.queue_pos);
+            if wire.shuffle {
+                if !self.state.playback.shuffle {
+                    self.state.queue.remember_order();
+                }
+                self.state
+                    .queue
+                    .replace_shuffled_context(tracks, wire.queue_pos);
+            } else {
+                self.state.queue.replace_context(tracks, wire.queue_pos);
+            }
             self.resolve_queue_artwork();
         }
+        let current_changed = previous_index != self.state.queue.current_index()
+            || previous_track
+                .as_ref()
+                .zip(self.state.queue.current().map(|item| &item.track.key))
+                .is_none_or(|(previous, current)| !previous.matches(current));
         self.state.playback.volume = f32::from(wire.volume.min(100)) / 100.0;
+        self.state.playback.shuffle = wire.shuffle;
+        self.state.playback.repeat = repeat_from_wire(wire.repeat);
         self.state.playback.position_seconds = wire.position_secs.max(0.0);
         self.state.playback.duration_seconds = self
             .state
@@ -338,9 +361,11 @@ impl Actor {
         if !start_audio {
             return;
         }
-        if wire.playing {
+        if !wire.playing {
+            self.audio.stop();
+        } else if previous_status == PlaybackStatus::Stopped || current_changed {
             self.play_current();
-            if seek || wire.position_secs > 0.0 {
+            if seek {
                 self.audio
                     .seek(Duration::from_secs_f64(wire.position_secs.max(0.0)));
                 self.state.playback.position_seconds = wire.position_secs.max(0.0);
@@ -349,8 +374,13 @@ impl Actor {
                 self.audio.pause();
                 self.state.playback.status = PlaybackStatus::Paused;
             }
-        } else {
-            self.audio.stop();
+        } else if wire.paused {
+            self.audio.pause();
+        } else if previous_status == PlaybackStatus::Paused {
+            self.audio.resume();
+        } else if seek {
+            self.audio
+                .seek(Duration::from_secs_f64(wire.position_secs.max(0.0)));
         }
     }
 
@@ -477,5 +507,25 @@ impl Actor {
                 content_id,
             },
         })
+    }
+}
+
+fn repeat_to_wire(
+    repeat: furumi_backend_api::PlaybackRepeat,
+) -> music_dht::device_sync::PlaybackRepeat {
+    match repeat {
+        furumi_backend_api::PlaybackRepeat::Off => music_dht::device_sync::PlaybackRepeat::Off,
+        furumi_backend_api::PlaybackRepeat::One => music_dht::device_sync::PlaybackRepeat::One,
+        furumi_backend_api::PlaybackRepeat::All => music_dht::device_sync::PlaybackRepeat::All,
+    }
+}
+
+fn repeat_from_wire(
+    repeat: music_dht::device_sync::PlaybackRepeat,
+) -> furumi_backend_api::PlaybackRepeat {
+    match repeat {
+        music_dht::device_sync::PlaybackRepeat::Off => furumi_backend_api::PlaybackRepeat::Off,
+        music_dht::device_sync::PlaybackRepeat::One => furumi_backend_api::PlaybackRepeat::One,
+        music_dht::device_sync::PlaybackRepeat::All => furumi_backend_api::PlaybackRepeat::All,
     }
 }

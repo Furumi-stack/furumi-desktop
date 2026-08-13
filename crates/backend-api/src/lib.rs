@@ -27,12 +27,33 @@ pub enum PlaybackStatus {
     Paused,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PlaybackRepeat {
+    #[default]
+    Off,
+    One,
+    All,
+}
+
+impl PlaybackRepeat {
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Off => Self::All,
+            Self::All => Self::One,
+            Self::One => Self::Off,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlaybackSnapshot {
     pub status: PlaybackStatus,
     pub position_seconds: f64,
     pub duration_seconds: f64,
     pub volume: f32,
+    pub shuffle: bool,
+    pub repeat: PlaybackRepeat,
 }
 
 impl Default for PlaybackSnapshot {
@@ -42,6 +63,8 @@ impl Default for PlaybackSnapshot {
             position_seconds: 0.0,
             duration_seconds: 0.0,
             volume: 0.72,
+            shuffle: false,
+            repeat: PlaybackRepeat::Off,
         }
     }
 }
@@ -251,6 +274,8 @@ pub enum BackendCommand {
     SetVolume {
         volume: f32,
     },
+    ToggleShuffle,
+    CycleRepeat,
     PlayRelease {
         release_id: ReleaseKey,
         start: usize,

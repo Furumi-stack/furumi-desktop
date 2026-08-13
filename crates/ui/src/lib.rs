@@ -14,7 +14,7 @@ use furumi_application::{
 use furumi_backend::BackendHandle;
 use furumi_backend_api::{
     BackendCommand, DevicePlaybackRole, DevicePresence, DeviceTrust, FederationOperation,
-    PlaybackStatus, RemoteData,
+    PlaybackRepeat, PlaybackStatus, RemoteData,
 };
 use furumi_domain::{
     Artist, ArtistKey, ArtistRef, AudioSource, CatalogSource, ContentId, LocalTrackId, QueueItemId,
@@ -363,6 +363,18 @@ fn bind_player_callbacks(
         let state = Arc::clone(state);
         let backend = backend.clone();
         move || dispatch_action(&window, &state, &backend, UiAction::Previous)
+    });
+    window.on_toggle_shuffle({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move || dispatch_action(&window, &state, &backend, UiAction::ToggleShuffle)
+    });
+    window.on_cycle_repeat({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move || dispatch_action(&window, &state, &backend, UiAction::CycleRepeat)
     });
     window.on_seek({
         let window = window.as_weak();
