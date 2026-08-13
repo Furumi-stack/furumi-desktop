@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "furumi-application"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "furumi-backend-api",
  "furumi-domain",
@@ -2118,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "furumi-backend"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -2136,14 +2136,14 @@ dependencies = [
 
 [[package]]
 name = "furumi-backend-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "furumi-domain",
 ]
 
 [[package]]
 name = "furumi-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "furumi-backend",
  "furumi-ui",
@@ -2151,7 +2151,7 @@ dependencies = [
 
 [[package]]
 name = "furumi-domain"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "furumi-library"
@@ -2172,7 +2172,7 @@ dependencies = [
 
 [[package]]
 name = "furumi-platform-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "core-foundation 0.10.1",
  "objc2 0.6.4",
@@ -2185,7 +2185,7 @@ dependencies = [
 
 [[package]]
 name = "furumi-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "furumi-application",
  "furumi-backend",
