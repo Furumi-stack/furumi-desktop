@@ -90,3 +90,4 @@ cargo test --workspace --all-targets
 
 Furumi Desktop is released under the
 [Do What The Fuck You Want To Public License, Version 2](LICENSE).
+
