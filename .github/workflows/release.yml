@@ -141,7 +141,7 @@ jobs:
               "$archive_name"
 
             chmod +x "$archive_name"
-            "$archive_name" --appimage-extract >/dev/null
+            "./$archive_name" --appimage-extract >/dev/null
             test -x squashfs-root/AppRun
             test -x squashfs-root/usr/bin/furumi-desktop
             test -f squashfs-root/usr/share/applications/furumi-desktop.desktop
