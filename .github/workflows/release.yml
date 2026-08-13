@@ -20,10 +20,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # AppImages must be built on the oldest supported distribution so
+          # that their glibc requirement remains compatible with newer ones.
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             asset_name: furumi-desktop-linux-x86_64
-            archive_ext: tar.gz
+            archive_ext: AppImage
             binary_name: furumi-desktop
           - os: macos-latest
             target: aarch64-apple-darwin
@@ -95,8 +97,58 @@ jobs:
           package_dir="dist/${{ matrix.asset_name }}"
           binary="target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
 
-          mkdir -p "$package_dir"
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            app_dir="dist/FurumiDesktop.AppDir"
+            appimage_runtime="$RUNNER_TEMP/appimage-runtime-x86_64"
+            linuxdeploy="$RUNNER_TEMP/linuxdeploy-x86_64.AppImage"
+            linuxdeploy_dir="$RUNNER_TEMP/linuxdeploy"
+            linuxdeploy_version="1-alpha-20251107-1"
+            linuxdeploy_sha256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+            runtime_version="20251108"
+            runtime_sha256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+
+            mkdir -p "$app_dir/usr/share/doc/furumi-desktop"
+            cp README.md LICENSE "$app_dir/usr/share/doc/furumi-desktop/"
+
+            curl --fail --location --retry 3 --silent --show-error \
+              "https://github.com/linuxdeploy/linuxdeploy/releases/download/${linuxdeploy_version}/linuxdeploy-x86_64.AppImage" \
+              --output "$linuxdeploy"
+            echo "${linuxdeploy_sha256}  ${linuxdeploy}" | sha256sum --check
+            chmod +x "$linuxdeploy"
+
+            curl --fail --location --retry 3 --silent --show-error \
+              "https://github.com/AppImage/type2-runtime/releases/download/${runtime_version}/runtime-x86_64" \
+              --output "$appimage_runtime"
+            echo "${runtime_sha256}  ${appimage_runtime}" | sha256sum --check
+
+            APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
+              --appdir "$app_dir" \
+              --executable "$binary" \
+              --desktop-file packaging/linux/furumi-desktop.desktop \
+              --icon-file crates/ui/assets/federation.svg \
+              --icon-filename furumi-desktop
+
+            mkdir -p "$linuxdeploy_dir"
+            (
+              cd "$linuxdeploy_dir"
+              "$linuxdeploy" --appimage-extract >/dev/null
+            )
+            appimagetool="$linuxdeploy_dir/squashfs-root/plugins/linuxdeploy-plugin-appimage/appimagetool-prefix/AppRun"
+            ARCH=x86_64 VERSION="$version" "$appimagetool" \
+              --no-appstream \
+              --runtime-file "$appimage_runtime" \
+              "$app_dir" \
+              "$archive_name"
+
+            chmod +x "$archive_name"
+            "$archive_name" --appimage-extract >/dev/null
+            test -x squashfs-root/AppRun
+            test -x squashfs-root/usr/bin/furumi-desktop
+            test -f squashfs-root/usr/share/applications/furumi-desktop.desktop
+            test -f squashfs-root/usr/share/icons/hicolor/scalable/apps/furumi-desktop.svg
+            rm -rf squashfs-root
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            mkdir -p "$package_dir"
             app_dir="$package_dir/Furumi Desktop.app"
             mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
             cp "$binary" "$app_dir/Contents/MacOS/furumi-desktop"
@@ -151,14 +203,15 @@ jobs:
             codesign --force --deep --sign - "$app_dir"
             codesign --verify --deep --strict "$app_dir"
           else
+            mkdir -p "$package_dir"
             cp "$binary" "$package_dir/"
           fi
-          cp README.md "$package_dir/"
-          cp LICENSE "$package_dir/"
 
           if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp README.md LICENSE "$package_dir/"
             (cd dist && 7z a "../${archive_name}" "${{ matrix.asset_name }}")
-          else
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            cp README.md LICENSE "$package_dir/"
             tar -C dist -czf "$archive_name" "${{ matrix.asset_name }}"
           fi
 

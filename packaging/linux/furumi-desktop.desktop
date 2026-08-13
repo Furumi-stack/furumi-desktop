@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Furumi Desktop
+Comment=Native player for personal music libraries and the Furumi network
+Exec=furumi-desktop
+Icon=furumi-desktop
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+StartupNotify=true

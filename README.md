@@ -63,6 +63,17 @@ nix-shell
 cargo run --bin furumi-desktop
 ```
 
+Linux releases are distributed as AppImages. Make the downloaded file
+executable and run it directly:
+
+```bash
+chmod +x furumi-desktop-linux-x86_64-*.AppImage
+./furumi-desktop-linux-x86_64-*.AppImage
+```
+
+On NixOS, enable AppImage support with `programs.appimage.enable` and
+`programs.appimage.binfmt`, or launch it explicitly with `appimage-run`.
+
 macOS and Windows require no additional system packages. Player settings are
 available inside the application and are saved automatically.
 
@@ -90,4 +101,3 @@ cargo test --workspace --all-targets
 
 Furumi Desktop is released under the
 [Do What The Fuck You Want To Public License, Version 2](LICENSE).
-
