@@ -65,10 +65,50 @@ the common placeholder and never performs filesystem or network I/O.
 
 ## Settings persistence
 
-The backend stores settings in `furumi-desktop.sqlite3` under the platform
-application-data directory selected by `directories::ProjectDirs`. Schema
-changes are ordered migrations recorded in `schema_migrations`; each migration
-runs in a transaction. The settings writer owns its SQLite connection on a
-dedicated thread and coalesces bursts of edits before writing the latest full
-snapshot. The configured device name is also written to the connected-device
-identity and published through the device-profile operation log.
+The backend stores settings in `furumi-desktop.sqlite3` under the dedicated
+`furumi-desktop` platform application-data directory selected by
+`directories::ProjectDirs`. Device identity, federation state, and caches use
+that same desktop-specific namespace and are never shared with other Furumi
+clients. Only the music library path returned by `furumi-library` is shared.
+Schema changes are ordered migrations recorded in `schema_migrations`; each
+migration runs in a transaction. The settings writer owns its SQLite connection
+on a dedicated thread and coalesces bursts of edits before writing the latest
+full snapshot. The configured device name is also written to the connected-
+device identity and published through the device-profile operation log.
+
+## Device pairing and sync groups
+
+A pairing request includes the requester's sync-group ID, active-device count,
+and known device profiles. A requester that is the only active device can move
+to the inviter's group through the normal accept flow. If it already belongs to
+a different group with multiple active devices, the inviter must explicitly
+choose either to join that existing group or keep the local group and move only
+the requesting device into it. Joining imports the requester's group profiles;
+keeping the local group may leave the requester's former peers unable to sync
+with that device. The backend never resolves this conflict without a user
+choice.
+
+The default music directory is derived from the parent directory of the shared
+`furumi-library` database and named `federation-media`. This keeps the default
+platform-correct (`$XDG_DATA_HOME/furumi/federation-media` on Linux) and shared
+with other Furumi clients. The desktop-specific federation image and temporary
+stream caches remain under the desktop cache directory. A user-selected Library
+Path replaces only the permanent music directory and is never overwritten by
+default-path migrations.
+
+## Listening history and similarity
+
+Qualified listening sessions are append-only `ListenRecorded` operations in
+the trusted-device sync log. Desktop records its own finished, skipped,
+stopped, and replaced sessions using the same wire contract as TUI, then
+projects `furumi-library`'s materialized history into a dedicated screen.
+Unknown remote content is resolved asynchronously by content ID so metadata
+and artwork can be enriched without blocking the UI.
+
+Similarity is disabled by default. When enabled, the backend downloads the
+selected versioned ONNX model, stores normalized embeddings in the shared
+music database, and keeps an exact in-memory index for local queries. Network
+queries additionally require explicit privacy consent. Compatible peers are
+discovered through the signed similarity-routing DHT with connected/known
+peers as fallback; only anonymous numeric embeddings with an exact profile
+fingerprint are exchanged.

@@ -14,6 +14,8 @@ use furumi_domain::{
 use music_dht::catalog::{
     CATALOG_ALPN, CatalogArtist, CatalogImageHeader, CatalogRequest, CatalogResponse,
 };
+use music_dht::similarity_dht::SimilarityDht;
+use music_dht::similarity_lsh::SIMILARITY_DHT_ALPN;
 use music_dht::{
     EndpointId, ItemKind, ItemSpec, LibraryItem, MusicDhtConfig, MusicDhtService, NetworkId,
     RendezvousConfig,
@@ -82,29 +84,60 @@ const IMAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
 
 pub struct Client {
     service: Arc<MusicDhtService>,
+    similarity_dht: Arc<SimilarityDht>,
     media_dir: PathBuf,
 }
 
 impl Client {
-    pub async fn start(data_dir: PathBuf, media_dir: PathBuf, network: &str) -> Result<Arc<Self>> {
+    pub async fn start(
+        data_dir: PathBuf,
+        media_dir: PathBuf,
+        network: &str,
+        similarity: Arc<crate::similarity::Manager>,
+    ) -> Result<Arc<Self>> {
         tokio::fs::create_dir_all(&data_dir).await?;
         tokio::fs::create_dir_all(&media_dir).await?;
+        let similarity_routing_path = data_dir.join("similarity-routing.sqlite3");
         let config = MusicDhtConfig::builder()
-            .data_dir(data_dir)
+            .data_dir(&data_dir)
             .network_id(NetworkId::from_name(network))
             .rendezvous(RendezvousConfig::default())
             .stream_protocol(CATALOG_ALPN)
             .stream_protocol(AUDIO_ALPN)
             .stream_protocol(music_dht::device_sync::SYNC_ALPN_V1)
             .stream_protocol(music_dht::device_sync::SYNC_ALPN_V2)
+            .schema_independent_stream_protocol(crate::federation_similarity::SIMILARITY_ALPN)
+            .schema_independent_stream_protocol(SIMILARITY_DHT_ALPN)
             .build()
             .context("invalid federation configuration")?;
         let (service, mut events) = MusicDhtService::start(config)
             .await
             .context("starting federation node")?;
         tokio::spawn(async move { while events.recv().await.is_some() {} });
+        let service = Arc::new(service);
+        let similarity_dht = SimilarityDht::open(Arc::clone(&service), similarity_routing_path)
+            .await
+            .context("starting similarity routing overlay")?;
+        let routing_acceptor = service
+            .stream_acceptor(SIMILARITY_DHT_ALPN)
+            .context("starting similarity routing listener")?;
+        tokio::spawn(Arc::clone(&similarity_dht).serve(routing_acceptor));
+        tokio::spawn(Arc::clone(&similarity_dht).maintenance());
+        tokio::spawn(crate::federation_similarity::sync_routes(
+            Arc::clone(&similarity_dht),
+            Arc::clone(&similarity),
+        ));
+        let similarity_acceptor = service
+            .stream_acceptor(crate::federation_similarity::SIMILARITY_ALPN)
+            .context("starting similarity listener")?;
+        tokio::spawn(crate::federation_similarity::serve(
+            similarity_acceptor,
+            similarity,
+            service.endpoint_id(),
+        ));
         Ok(Arc::new(Self {
-            service: Arc::new(service),
+            service,
+            similarity_dht,
             media_dir,
         }))
     }
@@ -171,6 +204,33 @@ impl Client {
         Ok((results, stats))
     }
 
+    pub async fn search_similar(
+        &self,
+        query: crate::similarity::QueryVector,
+        limit: usize,
+        minimum_score: f32,
+        max_tracks_per_artist: usize,
+    ) -> Result<Vec<crate::federation_similarity::ScoredTrack>> {
+        let mut hits = crate::federation_similarity::search(
+            Arc::clone(&self.service),
+            Arc::clone(&self.similarity_dht),
+            query,
+            limit,
+            minimum_score,
+            max_tracks_per_artist,
+        )
+        .await?;
+        let mut results = SearchResults {
+            tracks: hits.iter().map(|hit| hit.track.clone()).collect(),
+            ..SearchResults::default()
+        };
+        self.fetch_artwork(&mut results).await;
+        for (hit, with_artwork) in hits.iter_mut().zip(results.tracks) {
+            hit.track = with_artwork;
+        }
+        Ok(hits)
+    }
+
     /// Resolves a portable queue entry when another connected device only
     /// knows its stable audio content id.
     pub async fn track_by_content_id(&self, content_id: &str) -> Result<Track> {
@@ -181,11 +241,17 @@ impl Client {
             .into_iter()
             .chain(outcome.network_results)
             .collect::<Vec<_>>();
-        convert_items(&items, own)
+        let mut track = convert_items(&items, own)
             .tracks
             .into_iter()
             .next()
-            .context("no federation peer currently publishes this track")
+            .context("no federation peer currently publishes this track")?;
+        if track.cover_uri.is_none()
+            && let Some(path) = self.artwork_for_track(&track).await
+        {
+            track.cover_uri = Some(path.to_string_lossy().into_owned());
+        }
+        Ok(track)
     }
 
     pub async fn publish(&self, specs: Vec<ItemSpec>) -> Result<()> {

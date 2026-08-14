@@ -3,6 +3,7 @@ pub(super) fn render(window: &AppWindow, state: &AppState) {
     render_shell(window, state);
     render_catalog(window, state);
     render_search(window, state);
+    render_similarity(window, state);
     render_queue(window, state);
     render_current_track(window, state);
     render_playback(window, state);
@@ -15,7 +16,7 @@ pub(super) fn render_shell(window: &AppWindow, state: &AppState) {
     window.set_search_label(strings.search.into());
     window.set_library_label(strings.library.into());
     window.set_queue_label(strings.queue.into());
-    window.set_recent_label(strings.recently_played.into());
+    window.set_history_label(strings.listening_history.into());
     window.set_featured_label(strings.made_for_listening.into());
     window.set_search_placeholder(strings.search_placeholder.into());
     window.set_active_screen(
@@ -23,6 +24,8 @@ pub(super) fn render_shell(window: &AppWindow, state: &AppState) {
             Screen::Home => "home",
             Screen::Search => "search",
             Screen::Library => "library",
+            Screen::History => "history",
+            Screen::Similarity => "similarity",
             Screen::Artist(_) => "artist",
             Screen::Release(_, _) => "release",
             Screen::Playlist(_) => "playlist",
@@ -40,6 +43,46 @@ pub(super) fn render_shell(window: &AppWindow, state: &AppState) {
     window.set_library_path(state.backend.settings.library_path.clone().into());
     window.set_federation_enabled(state.backend.settings.federation_enabled);
     window.set_save_federated_on_listen(state.backend.settings.save_federated_on_listen);
+    let similarity = &state.backend.settings.similarity;
+    window.set_similarity_enabled(similarity.enabled);
+    window.set_similarity_model(similarity.model.clone().into());
+    window.set_similarity_models(model(vec![SharedString::from(
+        "discogs-effnet-bsdynamic-1",
+    )]));
+    window.set_similarity_profile(similarity.profile.clone().into());
+    window.set_similarity_profiles(model(vec![SharedString::from("furumi-full-track-v1")]));
+    window.set_similarity_workers(i32::try_from(similarity.workers).unwrap_or(16));
+    window.set_similarity_minimum_score(similarity.minimum_score);
+    window.set_similarity_max_tracks_per_artist(
+        i32::try_from(similarity.max_tracks_per_artist).unwrap_or(50),
+    );
+    window.set_similarity_federation_consent(similarity.federation_consent);
+    let status = &state.backend.similarity_status;
+    window.set_similarity_status_phase(status.phase.clone().into());
+    window.set_similarity_status_progress(
+        format!("{} / {}", status.completed_tracks, status.total_tracks).into(),
+    );
+    window.set_similarity_status_storage(
+        format!(
+            "{} / {}",
+            status.stored_vectors,
+            compact_bytes(status.stored_bytes)
+        )
+        .into(),
+    );
+    window.set_similarity_status_current(
+        status
+            .current_track
+            .clone()
+            .or_else(|| status.error.clone())
+            .unwrap_or_else(|| {
+                status.active_profile.as_deref().map_or_else(
+                    || "Index is not ready".into(),
+                    |profile| format!("Active: {profile}"),
+                )
+            })
+            .into(),
+    );
     window.set_selected_language(state.backend.settings.language.clone().into());
     window.set_available_languages(model(vec![SharedString::from("English")]));
     window.set_search_query(state.frontend.search_query.clone().into());
@@ -47,6 +90,7 @@ pub(super) fn render_shell(window: &AppWindow, state: &AppState) {
     render_device_shell(window, state);
     let (network_busy, network_text) = federation_status(state);
     window.set_federation_status_busy(network_busy);
+    window.set_federation_status_running(state.backend.federation_debug.running);
     window.set_federation_status_text(network_text.into());
     render_federation_debug(window, state);
     render_build_info(window, state);
@@ -60,6 +104,18 @@ pub(super) fn render_shell(window: &AppWindow, state: &AppState) {
             .into(),
     );
     render_track_info(window, state);
+}
+
+fn compact_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * KIB;
+    if bytes >= MIB {
+        format!("{}.{:01} MiB", bytes / MIB, bytes % MIB * 10 / MIB)
+    } else if bytes >= KIB {
+        format!("{}.{:01} KiB", bytes / KIB, bytes % KIB * 10 / KIB)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn render_federation_debug(window: &AppWindow, state: &AppState) {
@@ -184,13 +240,27 @@ fn render_device_shell(window: &AppWindow, state: &AppState) {
         devices
             .pending_pairings
             .iter()
-            .map(|pending| PairingView {
-                request_id: pending.request_id.clone().into(),
-                name: pending.name.clone().into(),
-                details: format!("Furumi {} · {}", pending.client_version, pending.device_id)
-                    .into(),
-                group_conflict: pending.requester_group_id.is_some()
-                    && pending.requester_group_active_devices > 1,
+            .map(|pending| {
+                let group_conflict = pending.requester_group_id.is_some()
+                    && pending.requester_group_active_devices > 1;
+                PairingView {
+                    request_id: pending.request_id.clone().into(),
+                    name: pending.name.clone().into(),
+                    details: format!("Furumi {} · {}", pending.client_version, pending.device_id)
+                        .into(),
+                    group_conflict,
+                    group_summary: pending
+                        .requester_group_id
+                        .as_ref()
+                        .map_or_else(String::new, |group_id| {
+                            format!(
+                                "Their group · {} active devices · {}",
+                                pending.requester_group_active_devices,
+                                group_id.chars().take(24).collect::<String>()
+                            )
+                        })
+                        .into(),
+                }
             })
             .collect(),
     ));
@@ -406,9 +476,15 @@ fn find_track<'a>(state: &'a AppState, key: &TrackKey) -> Option<&'a Track> {
         .chain(
             ready_library(state)
                 .into_iter()
+                .flat_map(|library| library.recently_played.iter()),
+        )
+        .chain(
+            ready_library(state)
+                .into_iter()
                 .flat_map(|library| library.playlists.iter())
                 .flat_map(|playlist| playlist.tracks.iter()),
         )
+        .chain(state.backend.similarity_search.results.iter())
         .find(|track| track.key.matches(key))
 }
 
@@ -462,11 +538,12 @@ pub(super) fn track_context(state: &AppState, context: &str) -> Vec<TrackKey> {
     let tracks: Vec<Track> = match context {
         "release" => selected_release(state).map_or_else(Vec::new, |release| release.tracks),
         "search" => state.backend.search.results.tracks.clone(),
-        "recent" => ready_library(state)
+        "history" => ready_library(state)
             .into_iter()
             .flat_map(|library| library.recently_played.iter())
             .cloned()
             .collect(),
+        "similarity" => state.backend.similarity_search.results.clone(),
         "artist-featured" => selected_artist(state).map_or_else(Vec::new, |artist| {
             ready_library(state)
                 .into_iter()
@@ -492,17 +569,18 @@ pub(super) fn track_context(state: &AppState, context: &str) -> Vec<TrackKey> {
     tracks.into_iter().map(|track| track.key).collect()
 }
 
-pub(super) fn breadcrumb_screen(state: &AppState, target: &SharedString) -> Option<Screen> {
+pub(super) fn breadcrumb_screen(target: &SharedString) -> Option<Screen> {
     match target.as_str() {
         "home" => Some(Screen::Home),
         "search" => Some(Screen::Search),
         "library" => Some(Screen::Library),
+        "history" => Some(Screen::History),
         value if value.starts_with("playlist:") => value
             .trim_start_matches("playlist:")
             .parse::<i64>()
             .ok()
             .map(Screen::Playlist),
-        _ => find_artist_key(state, target).map(Screen::Artist),
+        _ => parse_artist_key(target).map(Screen::Artist),
     }
 }
 
@@ -525,6 +603,14 @@ fn breadcrumbs(state: &AppState) -> Vec<BreadcrumbView> {
         Screen::Library => vec![
             crumb("Home".into(), "home".into(), true),
             crumb("Library".into(), String::new(), false),
+        ],
+        Screen::History => vec![
+            crumb("Home".into(), "home".into(), true),
+            crumb("Listening history".into(), String::new(), false),
+        ],
+        Screen::Similarity => vec![
+            crumb("Home".into(), "home".into(), true),
+            crumb("Similar tracks".into(), String::new(), false),
         ],
         Screen::Artist(_) => vec![
             crumb("Home".into(), "home".into(), true),
@@ -588,7 +674,11 @@ pub(super) fn render_catalog(window: &AppWindow, state: &AppState) {
     });
     window.set_releases(model(releases));
     let artists = library.map_or_else(Vec::new, |library| {
-        library.artists.iter().map(artist_to_view).collect()
+        library
+            .artists
+            .iter()
+            .map(|artist| artist_to_view(artist, &library.featured_releases))
+            .collect()
     });
     window.set_artists(model(artists));
 
@@ -660,10 +750,10 @@ pub(super) fn render_catalog(window: &AppWindow, state: &AppState) {
 
     render_catalog_detail(window, state, selected_artist);
 
-    let recent = library.map_or_else(Vec::new, |library| {
+    let history = library.map_or_else(Vec::new, |library| {
         tracks_to_views(&library.recently_played, state)
     });
-    window.set_tracks(model(recent));
+    window.set_history_tracks(model(history));
     let playlist = selected_playlist(state);
     window.set_playlist_title(
         playlist
@@ -741,6 +831,7 @@ pub(super) fn render_queue(window: &AppWindow, state: &AppState) {
             let (artwork, has_artwork) = load_artwork(item.track.cover_uri.as_deref());
             QueueView {
                 key: item.id.get().to_string().into(),
+                track_key: format_track_key(&item.track.key).into(),
                 title: item.track.title.clone().into(),
                 artist: item.track.artist.clone().into(),
                 artist_key: item
@@ -753,6 +844,7 @@ pub(super) fn render_queue(window: &AppWindow, state: &AppState) {
                 release: item.track.release.clone().into(),
                 release_key: format_release_key(&item.track.release_id).into(),
                 active: state.backend.queue.current_index() == Some(index),
+                liked: item.track.liked,
                 artwork,
                 has_artwork,
             }
@@ -809,7 +901,12 @@ pub(super) fn render_current_track(window: &AppWindow, state: &AppState) {
 pub(super) fn render_search(window: &AppWindow, state: &AppState) {
     let search = &state.backend.search;
     window.set_search_artists(model(
-        search.results.artists.iter().map(artist_to_view).collect(),
+        search
+            .results
+            .artists
+            .iter()
+            .map(|artist| artist_to_view(artist, &search.results.releases))
+            .collect(),
     ));
     window.set_search_releases(model(
         search
@@ -820,6 +917,14 @@ pub(super) fn render_search(window: &AppWindow, state: &AppState) {
             .collect(),
     ));
     window.set_search_results(model(tracks_to_views(&search.results.tracks, state)));
+}
+
+pub(super) fn render_similarity(window: &AppWindow, state: &AppState) {
+    let search = &state.backend.similarity_search;
+    window.set_similarity_source_title(search.source_title.clone().into());
+    window.set_similarity_pending(search.pending);
+    window.set_similarity_error(search.error.clone().unwrap_or_default().into());
+    window.set_similarity_tracks(model(tracks_to_views(&search.results, state)));
 }
 
 fn search_duration_label(milliseconds: u64) -> String {
@@ -1028,8 +1133,13 @@ pub(super) fn contributor_lines(artists: &[ArtistRef], width: f32) -> Vec<Artist
         .collect()
 }
 
-fn artist_to_view(artist: &Artist) -> ArtistView {
-    let (artwork, has_artwork) = load_artwork(artist.artwork.uri.as_deref());
+fn artist_to_view(artist: &Artist, releases: &[Release]) -> ArtistView {
+    let artwork_uri = artist
+        .artwork
+        .uri
+        .as_deref()
+        .or_else(|| fallback_artist_artwork(artist, releases));
+    let (artwork, has_artwork) = load_artwork(artwork_uri);
     ArtistView {
         key: format_artist_key(&artist.key).into(),
         name: artist.name.clone().into(),
@@ -1042,6 +1152,30 @@ fn artist_to_view(artist: &Artist) -> ArtistView {
         has_artwork,
         federated: matches!(artist.source, CatalogSource::Federation { .. }),
     }
+}
+
+fn fallback_artist_artwork<'a>(artist: &Artist, releases: &'a [Release]) -> Option<&'a str> {
+    let belongs_to_artist = |release: &&Release| {
+        release
+            .artists
+            .iter()
+            .any(|candidate| candidate.key == artist.key)
+            && release.artwork.uri.is_some()
+    };
+    let mut candidates = releases
+        .iter()
+        .filter(|release| release.is_album())
+        .filter(belongs_to_artist)
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        candidates.extend(releases.iter().filter(belongs_to_artist));
+    }
+    let hash = artist.name.bytes().fold(0_usize, |hash, byte| {
+        hash.wrapping_mul(31) ^ usize::from(byte)
+    });
+    candidates
+        .get(hash % candidates.len().max(1))
+        .and_then(|release| release.artwork.uri.as_deref())
 }
 
 fn release_to_view(release: &Release) -> ReleaseView {
@@ -1296,16 +1430,21 @@ fn format_release_key(key: &ReleaseKey) -> String {
     }
 }
 
-pub(super) fn find_artist_key(state: &AppState, value: &SharedString) -> Option<ArtistKey> {
-    let local = match &state.backend.library {
-        RemoteData::Ready(library) => library.artists.as_slice(),
-        _ => &[],
-    };
-    local
-        .iter()
-        .chain(state.backend.search.results.artists.iter())
-        .find(|artist| format_artist_key(&artist.key) == value.as_str())
-        .map(|artist| artist.key.clone())
+pub(super) fn parse_artist_key(value: &SharedString) -> Option<ArtistKey> {
+    if let Some(local) = value.strip_prefix("local-artist:") {
+        return local
+            .parse::<i64>()
+            .ok()
+            .map(|id| ArtistKey::local(furumi_domain::ArtistId::new(id)));
+    }
+    let (peer_id, id) = value.strip_prefix("fed-artist:")?.split_once(':')?;
+    if peer_id.is_empty() || id.is_empty() {
+        return None;
+    }
+    Some(ArtistKey::Federation {
+        peer_id: peer_id.into(),
+        id: id.into(),
+    })
 }
 
 pub(super) fn find_release_key(state: &AppState, value: &SharedString) -> Option<ReleaseKey> {
@@ -1378,6 +1517,51 @@ mod tests {
 
         assert_eq!(decoded.size().width, 1);
         assert_eq!(decoded.size().height, 1);
+    }
+
+    #[test]
+    fn artist_link_key_is_resolved_without_a_top_level_artist_row() {
+        let expected = ArtistKey::Federation {
+            peer_id: "peer-a".into(),
+            id: "guest:artist".into(),
+        };
+        let encoded: SharedString = format_artist_key(&expected).into();
+
+        assert_eq!(parse_artist_key(&encoded), Some(expected));
+    }
+
+    #[test]
+    fn artist_without_an_image_uses_one_of_its_album_covers() {
+        let key = ArtistKey::local(furumi_domain::ArtistId::new(12));
+        let artist = Artist {
+            key: key.clone(),
+            source: CatalogSource::Local,
+            name: "Artist".into(),
+            artwork: furumi_domain::Artwork::default(),
+            release_count: 1,
+            track_count: 1,
+        };
+        let release = Release {
+            key: ReleaseKey::local(furumi_domain::ReleaseId::new(8)),
+            source: CatalogSource::Local,
+            title: "Album".into(),
+            artists: vec![ArtistRef {
+                key,
+                name: "Artist".into(),
+            }],
+            featured_artists: Vec::new(),
+            release_type: "album".into(),
+            year: None,
+            artwork: furumi_domain::Artwork {
+                uri: Some("/music/album-cover.jpg".into()),
+            },
+            tracks: Vec::new(),
+        };
+
+        assert_eq!(
+            fallback_artist_artwork(&artist, &[release]),
+            Some("/music/album-cover.jpg")
+        );
     }
 
     #[test]

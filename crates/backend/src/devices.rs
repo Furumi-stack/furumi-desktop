@@ -12,10 +12,11 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use music_dht::device_sync::{
     DEFAULT_INVITE_TTL_MS, DEVICE_SYNC_PROTOCOL_VERSION, DeviceProfileWire, InviteWire,
-    PlaybackCommand, PlaybackSnapshot, SnapshotLike, SnapshotLikeTombstone, SnapshotPlaylist,
-    SnapshotPlaylistItem, SnapshotPlaylistItemTombstone, SnapshotPlaylistTombstone, SyncOpPayload,
-    SyncOpWire, SyncSnapshot, SyncedFedTrack, WireMessage, encode_invite, finish_response,
-    finish_send, hash_secret, parse_invite, random_hex, read_msg, ticket_endpoint_id, write_msg,
+    ListenEndReason, ListenEvent, ListenTrackMetadata, PlaybackCommand, PlaybackSnapshot,
+    SnapshotLike, SnapshotLikeTombstone, SnapshotPlaylist, SnapshotPlaylistItem,
+    SnapshotPlaylistItemTombstone, SnapshotPlaylistTombstone, SyncOpPayload, SyncOpWire,
+    SyncSnapshot, SyncedFedTrack, WireMessage, encode_invite, finish_response, finish_send,
+    hash_secret, parse_invite, random_hex, read_msg, ticket_endpoint_id, write_msg,
 };
 use music_dht::{ByteStream, MusicDhtService, PeerTicket, StreamAcceptor};
 use rusqlite::{Connection, OptionalExtension as _, params};
@@ -118,6 +119,10 @@ impl DeviceSync {
     pub fn identity(&self) -> Result<(String, String)> {
         let identity = self.ensure_identity()?;
         Ok((identity.device_id, identity.name))
+    }
+
+    pub fn new_listen_id() -> String {
+        format!("{}-{}", now_ms(), random_hex(12))
     }
 
     pub fn set_device_name(&self, name: &str, endpoint_ticket: Option<&str>) -> Result<()> {
@@ -365,6 +370,56 @@ impl DeviceSync {
             liked,
             fed,
         })
+    }
+
+    pub fn record_listen(
+        &self,
+        listen_id: String,
+        track: &furumi_domain::Track,
+        started_at_ms: i64,
+        listened_ms: i64,
+        ended_reason: ListenEndReason,
+    ) -> Result<()> {
+        let Some(content_id) = track
+            .key
+            .content_id()
+            .and_then(|id| music_dht::normalize_content_id(id.as_str()))
+        else {
+            return Ok(());
+        };
+        let mut artist_names = track
+            .artists
+            .iter()
+            .map(|artist| artist.name.clone())
+            .filter(|artist| !artist.trim().is_empty())
+            .collect::<Vec<_>>();
+        if artist_names.is_empty() && !track.artist.trim().is_empty() {
+            artist_names.push(track.artist.clone());
+        }
+        let event = ListenEvent {
+            listen_id,
+            content_id,
+            started_at_ms,
+            listened_ms: listened_ms.max(0),
+            track_duration_ms: (track.duration_seconds > 0.0).then_some(
+                crate::support::seconds_to_milliseconds(track.duration_seconds),
+            ),
+            ended_reason,
+            track: ListenTrackMetadata {
+                title: track.title.clone(),
+                artist_names,
+                featured_artist_names: track
+                    .featured_artists
+                    .iter()
+                    .map(|artist| artist.name.clone())
+                    .collect(),
+                release_title: (!track.release.trim().is_empty()).then(|| track.release.clone()),
+            },
+        };
+        if event.should_record() {
+            self.record_op(SyncOpPayload::ListenRecorded { event })?;
+        }
+        Ok(())
     }
 
     pub fn record_playlist_created(&self, id: i64, title: &str) -> Result<()> {
@@ -698,6 +753,8 @@ async fn handle_pair_request(
         finish_response(&mut stream, RESPONSE_DRAIN).await?;
         return Ok(());
     }
+    let requester_group_id = requester_group_id.filter(|group| !group.trim().is_empty());
+    let requester_group_active_devices = requester_group_active_devices.max(1);
     let devices_json = serde_json::to_string(&requester_devices)?;
     lock(&sync.conn).execute(
         "INSERT OR IGNORE INTO sync_pending_pairing
@@ -1016,6 +1073,15 @@ fn pair_request_id(invite_id: &str, device_id: &str) -> String {
     format!("pair_{}", &digest[..16])
 }
 
+fn requester_group_conflict(
+    local_group_id: &str,
+    requester_group_id: Option<&str>,
+    requester_group_active_devices: usize,
+) -> bool {
+    requester_group_id.is_some_and(|group| !group.trim().is_empty() && group != local_group_id)
+        && requester_group_active_devices > 1
+}
+
 fn valid_pair_request(
     sync: &DeviceSync,
     invite_id: &str,
@@ -1115,6 +1181,150 @@ enum PairAttempt {
 mod tests {
     use super::*;
 
+    static NEXT_TEST_DB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+    fn with_test_sync(test: impl FnOnce(&DeviceSync)) {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        let unique = NEXT_TEST_DB.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let library_path = std::env::temp_dir().join(format!(
+            "furumi-desktop-devices-test-{}-{}-{}.sqlite3",
+            std::process::id(),
+            now_ms(),
+            unique
+        ));
+        let library = Arc::new(furumi_library::Library::open(&library_path).unwrap());
+        let (events, _event_rx) = tokio::sync::mpsc::channel(4);
+        let sync = DeviceSync {
+            conn: Arc::new(Mutex::new(conn)),
+            library,
+            events,
+            playback: Arc::new(Mutex::new(PlaybackStore::default())),
+            sync_requested: Arc::new(tokio::sync::Notify::new()),
+        };
+        sync.ensure_identity().unwrap();
+
+        test(&sync);
+
+        drop(sync);
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = library_path.as_os_str().to_os_string();
+            path.push(suffix);
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    fn test_profile(device_id: &str) -> DeviceProfileWire {
+        DeviceProfileWire {
+            device_id: device_id.into(),
+            name: device_id.into(),
+            client_version: CLIENT_VERSION.into(),
+            protocol_version: DEVICE_SYNC_PROTOCOL_VERSION,
+            endpoint_id: String::new(),
+            endpoint_ticket: String::new(),
+            revoked: false,
+            revoke_cutoff_seq: None,
+            updated_at_ms: now_ms(),
+        }
+    }
+
+    #[test]
+    fn locally_finished_listen_enters_the_shared_history() {
+        with_test_sync(|sync| {
+            let content_id =
+                furumi_domain::ContentId::parse(format!("b3:{}", "a".repeat(64))).unwrap();
+            let track = furumi_domain::Track {
+                key: furumi_domain::TrackKey::remote(content_id.clone()),
+                title: "Shared listen".into(),
+                artist: "Artist".into(),
+                artists: vec![furumi_domain::ArtistRef {
+                    key: furumi_domain::ArtistKey::Federation {
+                        peer_id: "peer".into(),
+                        id: "artist".into(),
+                    },
+                    name: "Artist".into(),
+                }],
+                featured_artists: Vec::new(),
+                release: "Release".into(),
+                release_id: furumi_domain::ReleaseKey::Federation {
+                    peer_id: "peer".into(),
+                    id: "release".into(),
+                },
+                duration_seconds: 180.0,
+                track_number: Some(1),
+                disc_number: Some(1),
+                cover_uri: None,
+                audio_format: None,
+                audio_bitrate_kbps: None,
+                audio_sample_rate_hz: None,
+                audio_bit_depth: None,
+                file_size_bytes: None,
+                liked: false,
+                audio_source: furumi_domain::AudioSource::Federation {
+                    peer_id: "peer".into(),
+                    content_id,
+                },
+            };
+
+            sync.record_listen(
+                "desktop-listen".into(),
+                &track,
+                now_ms(),
+                180_000,
+                ListenEndReason::Finished,
+            )
+            .unwrap();
+
+            let history = sync.library.listen_history(10).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].listen_id, "desktop-listen");
+            assert_eq!(history[0].title, "Shared listen");
+        });
+    }
+
+    fn insert_pending_pairing(sync: &DeviceSync, requester_group_devices: &[DeviceProfileWire]) {
+        lock(&sync.conn)
+            .execute(
+                "INSERT INTO sync_pending_pairing
+                    (request_id, device_id, name, client_version, endpoint_id,
+                     endpoint_ticket, invite_id, created_at_ms, status,
+                     requester_group_id, requester_group_active_devices,
+                     requester_group_devices_json)
+                 VALUES ('request', 'dev_requester', 'Requester', ?1, '', '',
+                         'invite', ?2, 'pending', 'grp_remote', 2, ?3)",
+                params![
+                    CLIENT_VERSION,
+                    now_ms(),
+                    serde_json::to_string(requester_group_devices).unwrap()
+                ],
+            )
+            .unwrap();
+    }
+
+    fn device_known(sync: &DeviceSync, device_id: &str) -> bool {
+        lock(&sync.conn)
+            .query_row(
+                "SELECT 1 FROM sync_devices WHERE device_id = ?1",
+                [device_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .unwrap()
+            .is_some()
+    }
+
+    fn device_trusted(sync: &DeviceSync, device_id: &str) -> bool {
+        lock(&sync.conn)
+            .query_row(
+                "SELECT trusted_at_ms IS NOT NULL FROM sync_devices WHERE device_id = ?1",
+                [device_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()
+            .unwrap()
+            .unwrap_or(false)
+    }
+
     #[test]
     fn pairing_request_ids_are_stable_and_scoped_to_the_device() {
         assert_eq!(
@@ -1125,5 +1335,44 @@ mod tests {
             pair_request_id("invite", "device-a"),
             pair_request_id("invite", "device-b")
         );
+    }
+
+    #[test]
+    fn group_choice_is_only_required_for_an_existing_different_group() {
+        assert!(requester_group_conflict("grp_local", Some("grp_remote"), 2));
+        assert!(!requester_group_conflict(
+            "grp_local",
+            Some("grp_remote"),
+            1
+        ));
+        assert!(!requester_group_conflict("grp_local", Some("grp_local"), 3));
+        assert!(!requester_group_conflict("grp_local", None, 3));
+        assert!(!requester_group_conflict("grp_local", Some("  "), 3));
+    }
+
+    #[test]
+    fn pairing_choice_either_joins_the_requester_group_or_keeps_the_local_group() {
+        let requester_peer = test_profile("dev_requester_peer");
+
+        with_test_sync(|sync| {
+            let local_group = sync.ensure_identity().unwrap().group_id;
+            insert_pending_pairing(sync, std::slice::from_ref(&requester_peer));
+
+            sync.answer_pairing("request", true, false).unwrap();
+
+            assert_eq!(sync.ensure_identity().unwrap().group_id, local_group);
+            assert!(device_trusted(sync, "dev_requester"));
+            assert!(!device_known(sync, "dev_requester_peer"));
+        });
+
+        with_test_sync(|sync| {
+            insert_pending_pairing(sync, std::slice::from_ref(&requester_peer));
+
+            sync.answer_pairing("request", true, true).unwrap();
+
+            assert_eq!(sync.ensure_identity().unwrap().group_id, "grp_remote");
+            assert!(device_trusted(sync, "dev_requester"));
+            assert!(device_known(sync, "dev_requester_peer"));
+        });
     }
 }

@@ -55,12 +55,14 @@ export struct TrackView {
 
 export struct QueueView {
     key: string,
+    track-key: string,
     title: string,
     artist: string,
     artist-key: string,
     release: string,
     release-key: string,
     active: bool,
+    liked: bool,
     artwork: image,
     has-artwork: bool,
 }
@@ -87,4 +89,5 @@ export struct PairingView {
     name: string,
     details: string,
     group-conflict: bool,
+    group-summary: string,
 }

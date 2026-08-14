@@ -393,6 +393,44 @@ impl Queue {
         self.play_next_end = Some(insertion + count);
     }
 
+    /// Moves one concrete queue occurrence to a final visual position.
+    pub fn move_item(&mut self, id: QueueItemId, target_index: usize) -> bool {
+        let Some(source_index) = self.items.iter().position(|item| item.id == id) else {
+            return false;
+        };
+        let target_index = target_index.min(self.items.len().saturating_sub(1));
+        if source_index == target_index {
+            return false;
+        }
+        let current_id = self.current().map(|item| item.id);
+        let item = self.items.remove(source_index);
+        self.items.insert(target_index, item);
+        self.current =
+            current_id.and_then(|current| self.items.iter().position(|item| item.id == current));
+        self.play_next_end = None;
+        self.original_order = None;
+        true
+    }
+
+    /// Removes one concrete queue occurrence and keeps the nearest item selected.
+    ///
+    /// Returns whether the removed occurrence was the current one.
+    pub fn remove_item(&mut self, id: QueueItemId) -> Option<bool> {
+        let index = self.items.iter().position(|item| item.id == id)?;
+        let removed_current = self.current == Some(index);
+        self.items.remove(index);
+        self.current = match self.current {
+            None => None,
+            Some(_) if self.items.is_empty() => None,
+            Some(current) if index < current => Some(current - 1),
+            Some(current) if index == current => Some(index.min(self.items.len() - 1)),
+            Some(current) => Some(current),
+        };
+        self.play_next_end = None;
+        self.original_order = None;
+        Some(removed_current)
+    }
+
     pub fn replace_matching_track(&mut self, replacement: &Track) {
         for item in &mut self.items {
             if item.track.key.matches(&replacement.key) {
@@ -587,6 +625,39 @@ mod tests {
             queue.current().unwrap().track.key.local_id().unwrap().get(),
             12
         );
+    }
+
+    #[test]
+    fn moving_queue_items_preserves_the_current_occurrence() {
+        let mut queue = Queue::default();
+        queue.replace_context((1..=4).map(track).collect(), 1);
+        let moved = queue.items()[0].id;
+        let current = queue.current().unwrap().id;
+
+        assert!(queue.move_item(moved, 3));
+
+        assert_eq!(queue.current().unwrap().id, current);
+        assert_eq!(queue.current_index(), Some(0));
+        assert_eq!(
+            queue
+                .items()
+                .iter()
+                .map(|item| item.track.key.local_id().unwrap().get())
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4, 1]
+        );
+    }
+
+    #[test]
+    fn removing_current_queue_item_selects_the_next_occurrence() {
+        let mut queue = Queue::default();
+        queue.replace_context((1..=3).map(track).collect(), 1);
+        let current = queue.current().unwrap().id;
+
+        assert_eq!(queue.remove_item(current), Some(true));
+
+        assert_eq!(queue.current_index(), Some(1));
+        assert_eq!(queue.current().unwrap().track.title, "3");
     }
 
     #[test]

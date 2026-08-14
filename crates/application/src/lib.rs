@@ -3,7 +3,7 @@
 use furumi_backend_api::{
     BackendCommand, BackendSnapshot, PlaybackRepeat, PlaybackStatus, RequestId,
 };
-use furumi_domain::{ArtistKey, QueueItemId, ReleaseKey, TrackKey};
+use furumi_domain::{ArtistKey, QueueItemId, Release, ReleaseKey, Track, TrackKey};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub struct Strings {
     pub search: &'static str,
     pub library: &'static str,
     pub queue: &'static str,
-    pub recently_played: &'static str,
+    pub listening_history: &'static str,
     pub made_for_listening: &'static str,
     pub empty_queue: &'static str,
     pub search_placeholder: &'static str,
@@ -31,7 +31,7 @@ pub const EN: Strings = Strings {
     search: "Search",
     library: "Your library",
     queue: "Queue",
-    recently_played: "Recently played",
+    listening_history: "Listening history",
     made_for_listening: "Made for listening",
     empty_queue: "Your queue is empty",
     search_placeholder: "Artists, albums or tracks",
@@ -52,6 +52,8 @@ pub enum Screen {
     Home,
     Search,
     Library,
+    History,
+    Similarity,
     Artist(ArtistKey),
     Release(ReleaseKey, Option<ArtistKey>),
     Playlist(i64),
@@ -117,6 +119,13 @@ pub enum UiAction {
     },
     PlayTrack(TrackKey),
     PlayQueueItem(QueueItemId),
+    MoveQueueItem {
+        item_id: QueueItemId,
+        target_index: usize,
+    },
+    RemoveQueueItem(QueueItemId),
+    SearchSimilar(TrackKey),
+    ClearSimilarity,
     PlayContext {
         tracks: Vec<TrackKey>,
         selected: TrackKey,
@@ -145,6 +154,13 @@ pub enum UiAction {
     LibraryPathChanged(String),
     FederationChanged(bool),
     SaveFederatedOnListenChanged(bool),
+    SimilarityEnabledChanged(bool),
+    SimilarityModelChanged(String),
+    SimilarityProfileChanged(String),
+    SimilarityWorkersChanged(usize),
+    SimilarityMinimumScoreChanged(f32),
+    SimilarityMaxTracksPerArtistChanged(usize),
+    SimilarityFederationConsentChanged(bool),
     LanguageChanged(String),
     ShowTrackInfo(TrackKey),
     CloseTrackInfo,
@@ -180,13 +196,15 @@ pub fn reduce_action(state: &mut AppState, action: UiAction) -> Vec<Effect> {
             state.next_request_id = state.next_request_id.saturating_add(1);
             let request_id = RequestId::new(state.next_request_id);
             match screen {
-                Screen::Artist(key) => find_artist(state, &key).map_or_else(Vec::new, |artist| {
-                    send(BackendCommand::LoadArtist {
-                        request_id,
-                        key,
-                        name: artist.name.clone(),
+                Screen::Artist(key) => {
+                    find_artist_name(state, &key).map_or_else(Vec::new, |name| {
+                        send(BackendCommand::LoadArtist {
+                            request_id,
+                            key,
+                            name: name.to_owned(),
+                        })
                     })
-                }),
+                }
                 Screen::Release(key, preferred) => {
                     find_release(state, &key).map_or_else(Vec::new, |release| {
                         let selected_artist = preferred
@@ -198,8 +216,8 @@ pub fn reduce_action(state: &mut AppState, action: UiAction) -> Vec<Effect> {
                                     .find(|artist| &artist.key == preferred)
                                     .map(|artist| (artist.key.clone(), artist.name.clone()))
                                     .or_else(|| {
-                                        find_artist(state, preferred)
-                                            .map(|artist| (artist.key.clone(), artist.name.clone()))
+                                        find_artist_name(state, preferred)
+                                            .map(|name| (preferred.clone(), name.to_owned()))
                                     })
                             })
                             .or_else(|| {
@@ -271,6 +289,26 @@ pub fn reduce_action(state: &mut AppState, action: UiAction) -> Vec<Effect> {
         }
         UiAction::PlayTrack(track) => send(BackendCommand::PlayTrack { track }),
         UiAction::PlayQueueItem(item_id) => send(BackendCommand::PlayQueueItem { item_id }),
+        UiAction::MoveQueueItem {
+            item_id,
+            target_index,
+        } => send(BackendCommand::MoveQueueItem {
+            item_id,
+            target_index,
+        }),
+        UiAction::RemoveQueueItem(item_id) => send(BackendCommand::RemoveQueueItem { item_id }),
+        UiAction::SearchSimilar(track) => {
+            if state.frontend.screen != Screen::Similarity {
+                state
+                    .frontend
+                    .navigation_history
+                    .push(state.frontend.screen.clone());
+                state.frontend.navigation_forward.clear();
+            }
+            state.frontend.screen = Screen::Similarity;
+            send(BackendCommand::SearchSimilar { track })
+        }
+        UiAction::ClearSimilarity => send(BackendCommand::ClearSimilarity),
         UiAction::PlayContext { tracks, selected } => {
             send(BackendCommand::PlayContext { tracks, selected })
         }
@@ -362,6 +400,48 @@ pub fn reduce_action(state: &mut AppState, action: UiAction) -> Vec<Effect> {
                 state.backend.settings.clone(),
             ))
         }
+        UiAction::SimilarityEnabledChanged(enabled) => {
+            state.backend.settings.similarity.enabled = enabled;
+            send(BackendCommand::UpdateSettings(
+                state.backend.settings.clone(),
+            ))
+        }
+        UiAction::SimilarityModelChanged(model) => {
+            state.backend.settings.similarity.model = model;
+            send(BackendCommand::UpdateSettings(
+                state.backend.settings.clone(),
+            ))
+        }
+        UiAction::SimilarityProfileChanged(profile) => {
+            state.backend.settings.similarity.profile = profile;
+            send(BackendCommand::UpdateSettings(
+                state.backend.settings.clone(),
+            ))
+        }
+        UiAction::SimilarityWorkersChanged(workers) => {
+            state.backend.settings.similarity.workers = workers;
+            send(BackendCommand::UpdateSettings(
+                state.backend.settings.clone(),
+            ))
+        }
+        UiAction::SimilarityMinimumScoreChanged(minimum_score) => {
+            state.backend.settings.similarity.minimum_score = minimum_score;
+            send(BackendCommand::UpdateSettings(
+                state.backend.settings.clone(),
+            ))
+        }
+        UiAction::SimilarityMaxTracksPerArtistChanged(max_tracks_per_artist) => {
+            state.backend.settings.similarity.max_tracks_per_artist = max_tracks_per_artist;
+            send(BackendCommand::UpdateSettings(
+                state.backend.settings.clone(),
+            ))
+        }
+        UiAction::SimilarityFederationConsentChanged(federation_consent) => {
+            state.backend.settings.similarity.federation_consent = federation_consent;
+            send(BackendCommand::UpdateSettings(
+                state.backend.settings.clone(),
+            ))
+        }
         UiAction::LanguageChanged(language) => {
             state.frontend.locale = Locale::En;
             state.backend.settings.language = language;
@@ -384,15 +464,64 @@ pub fn reduce_action(state: &mut AppState, action: UiAction) -> Vec<Effect> {
     }
 }
 
-fn find_artist<'a>(state: &'a AppState, key: &ArtistKey) -> Option<&'a furumi_domain::Artist> {
-    match &state.backend.library {
+fn find_artist_name<'a>(state: &'a AppState, key: &ArtistKey) -> Option<&'a str> {
+    let library = match &state.backend.library {
         furumi_backend_api::RemoteData::Ready(l) => Some(l),
         _ => None,
+    };
+    if let Some(artist) = library
+        .into_iter()
+        .flat_map(|library| library.artists.iter())
+        .chain(state.backend.search.results.artists.iter())
+        .find(|artist| &artist.key == key)
+    {
+        return Some(artist.name.as_str());
     }
-    .into_iter()
-    .flat_map(|l| l.artists.iter())
-    .chain(state.backend.search.results.artists.iter())
-    .find(|a| &a.key == key)
+    if let Some(name) = library
+        .into_iter()
+        .flat_map(|library| library.featured_releases.iter())
+        .chain(state.backend.search.results.releases.iter())
+        .find_map(|release| artist_name_in_release(release, key))
+    {
+        return Some(name);
+    }
+    library
+        .into_iter()
+        .flat_map(|library| {
+            library.recently_played.iter().chain(
+                library
+                    .playlists
+                    .iter()
+                    .flat_map(|playlist| playlist.tracks.iter()),
+            )
+        })
+        .chain(state.backend.search.results.tracks.iter())
+        .chain(state.backend.queue.items().iter().map(|item| &item.track))
+        .find_map(|track| artist_name_in_track(track, key))
+}
+
+fn artist_name_in_release<'a>(release: &'a Release, key: &ArtistKey) -> Option<&'a str> {
+    release
+        .artists
+        .iter()
+        .chain(release.featured_artists.iter())
+        .find(|artist| &artist.key == key)
+        .map(|artist| artist.name.as_str())
+        .or_else(|| {
+            release
+                .tracks
+                .iter()
+                .find_map(|track| artist_name_in_track(track, key))
+        })
+}
+
+fn artist_name_in_track<'a>(track: &'a Track, key: &ArtistKey) -> Option<&'a str> {
+    track
+        .artists
+        .iter()
+        .chain(track.featured_artists.iter())
+        .find(|artist| &artist.key == key)
+        .map(|artist| artist.name.as_str())
 }
 
 fn find_release<'a>(state: &'a AppState, key: &ReleaseKey) -> Option<&'a furumi_domain::Release> {
@@ -517,6 +646,21 @@ mod tests {
     }
 
     #[test]
+    fn similarity_action_opens_results_and_starts_the_backend_search() {
+        let mut state = AppState::default();
+        let key = TrackKey::local(furumi_domain::LocalTrackId::new(42));
+
+        let effects = reduce_action(&mut state, UiAction::SearchSimilar(key.clone()));
+
+        assert_eq!(state.frontend.screen, Screen::Similarity);
+        assert_eq!(state.frontend.navigation_history, vec![Screen::Home]);
+        assert_eq!(
+            effects,
+            vec![Effect::Send(BackendCommand::SearchSimilar { track: key })]
+        );
+    }
+
+    #[test]
     fn stale_backend_snapshots_are_ignored() {
         let mut state = AppState::default();
         state.backend.revision = 8;
@@ -561,6 +705,44 @@ mod tests {
         assert_eq!(state.frontend.screen, artist_screen);
         assert!(state.frontend.navigation_forward.is_empty());
         assert_eq!(state.frontend.navigation_history, vec![Screen::Home]);
+    }
+
+    #[test]
+    fn featured_artist_reference_opens_the_standard_artist_detail() {
+        let mut state = AppState::default();
+        let artist_key = ArtistKey::Federation {
+            peer_id: "peer-a".into(),
+            id: "guest-artist".into(),
+        };
+        state.backend.search.results.releases = vec![Release {
+            key: ReleaseKey::Local(ReleaseId::new(7)),
+            source: CatalogSource::Local,
+            title: "Release".into(),
+            artists: Vec::new(),
+            featured_artists: vec![ArtistRef {
+                key: artist_key.clone(),
+                name: "Guest Artist".into(),
+            }],
+            release_type: "album".into(),
+            year: None,
+            artwork: Artwork::default(),
+            tracks: Vec::new(),
+        }];
+
+        let effects = reduce_action(
+            &mut state,
+            UiAction::Navigate(Screen::Artist(artist_key.clone())),
+        );
+
+        assert_eq!(state.frontend.screen, Screen::Artist(artist_key.clone()));
+        assert_eq!(
+            effects,
+            vec![Effect::Send(BackendCommand::LoadArtist {
+                request_id: RequestId::new(1),
+                key: artist_key,
+                name: "Guest Artist".into(),
+            })]
+        );
     }
 
     #[test]

@@ -1,6 +1,37 @@
 import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Slider } from "std-widgets.slint";
 import { ArtistLinkLineView, ArtistLinkView, ArtistView, BreadcrumbView, DeviceView, PairingView, PlaylistView, QueueView, ReleaseView, TrackView, VersionView } from "models.slint";
-import { AlbumGrid, ArtistGrid, ArtistLinksRow, BuildInfoCard, DeviceRow, FederationBadge, IconButton, InfoField, LinkText, MarqueeText, NavButton, PlaylistNavButton, SearchArtistGrid, SearchField, SearchReleaseGrid, StaticArtistList, TrackInfoArtists, TrackList } from "components.slint";
+import { AlbumGrid, ArtistGrid, ArtistLinksRow, BuildInfoCard, DeviceRow, FederationBadge, IconButton, InfoField, LinkText, MarqueeText, NavButton, PlaylistNavButton, RecommendedButton, SearchArtistGrid, SearchField, SearchReleaseGrid, StaticArtistList, TrackActionButton, TrackInfoArtists, TrackList, TrackMenuItem } from "components.slint";
+
+component FederationStateIndicator inherits Rectangle {
+    in property <bool> busy;
+    in property <bool> running;
+    width: 12px;
+    height: 100%;
+    horizontal-stretch: 0;
+    background: transparent;
+
+    if !root.busy: Rectangle {
+        width: 9px;
+        height: 9px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: self.width / 2;
+        background: root.running ? #55dbaa : #697080;
+    }
+
+    if root.busy: pulse := Rectangle {
+        private property <int> phase: floor(1 * mod(animation-tick(), 2s) / 250ms);
+        private property <int> level: self.phase < 4 ? self.phase : 7 - self.phase;
+        width: 12px - self.level * 2px;
+        height: self.width;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: self.width / 2;
+        border-width: 2px;
+        border-color: #55dbaa;
+        background: transparent;
+    }
+}
 
 export component AppWindow inherits Window {
     title: "Furumi Desktop";
@@ -17,7 +48,7 @@ export component AppWindow inherits Window {
     in property <string> search-label: "Search";
     in property <string> library-label: "Your library";
     in property <string> queue-label: "Queue";
-    in property <string> recent-label: "Recently played";
+    in property <string> history-label: "Listening history";
     in property <string> featured-label: "Made for listening";
     in property <string> search-placeholder: "Artists, albums or tracks";
     in-out property <string> search-query;
@@ -29,6 +60,19 @@ export component AppWindow inherits Window {
     in property <string> library-path;
     in property <bool> federation-enabled;
     in property <bool> save-federated-on-listen;
+    in property <bool> similarity-enabled;
+    in property <string> similarity-model;
+    in property <[string]> similarity-models;
+    in property <string> similarity-profile;
+    in property <[string]> similarity-profiles;
+    in property <int> similarity-workers: 1;
+    in property <float> similarity-minimum-score: 0.7;
+    in property <int> similarity-max-tracks-per-artist: 5;
+    in property <bool> similarity-federation-consent;
+    in property <string> similarity-status-phase: "disabled";
+    in property <string> similarity-status-progress: "0 / 0";
+    in property <string> similarity-status-storage: "0 vectors";
+    in property <string> similarity-status-current;
     in property <string> selected-language: "English";
     in property <[string]> available-languages;
     in property <[ReleaseView]> releases;
@@ -44,8 +88,15 @@ export component AppWindow inherits Window {
     in property <string> detail-release-type;
     in property <image> detail-artwork;
     in property <bool> detail-has-artwork;
-    in property <[TrackView]> tracks;
+    in property <[TrackView]> history-tracks;
+    in property <[TrackView]> similarity-tracks;
+    in property <string> similarity-source-title;
+    in property <bool> similarity-pending;
+    in property <string> similarity-error;
     in property <[QueueView]> queue-items;
+    private property <int> queue-drag-source: -1;
+    private property <int> queue-drag-target: -1;
+    private property <length> queue-drag-offset: 0px;
     in property <[PlaylistView]> playlists;
     in property <[TrackView]> playlist-tracks;
     in property <string> playlist-title;
@@ -63,6 +114,7 @@ export component AppWindow inherits Window {
     in property <[ArtistView]> search-artists;
     in property <[ReleaseView]> search-releases;
     in property <bool> federation-status-busy;
+    in property <bool> federation-status-running;
     in property <string> federation-status-text: "Federation ready";
     in property <string> federation-debug-node: "Stopped";
     in property <string> federation-debug-peers: "0 connected · 0 known";
@@ -125,6 +177,8 @@ export component AppWindow inherits Window {
     callback play-track(string);
     callback play-track-context(string, string);
     callback play-queue-item(string);
+    callback move-queue-item(string, int);
+    callback remove-queue-item(string);
     callback track-action(string, string);
     callback open-playlist(string);
     callback create-playlist(string);
@@ -141,6 +195,14 @@ export component AppWindow inherits Window {
     callback choose-library-path;
     callback federation-changed(bool);
     callback save-federated-on-listen-changed(bool);
+    callback similarity-enabled-changed(bool);
+    callback similarity-model-changed(string);
+    callback similarity-profile-changed(string);
+    callback similarity-workers-changed(int);
+    callback similarity-minimum-score-changed(float);
+    callback similarity-max-tracks-per-artist-changed(int);
+    callback similarity-federation-consent-changed(bool);
+    callback clear-similarity;
     callback language-changed(string);
     callback dismiss-error;
     callback close-track-info;
@@ -171,6 +233,7 @@ export component AppWindow inherits Window {
                     NavButton { label: root.home-label; icon-source: @image-url("../assets/home.svg"); active: root.active-screen == "home"; clicked => root.navigate("home"); }
                     NavButton { label: root.search-label; icon-source: @image-url("../assets/search.svg"); active: root.active-screen == "search"; clicked => root.navigate("search"); }
                     NavButton { label: root.library-label; icon-source: @image-url("../assets/library.svg"); active: root.active-screen == "library"; clicked => root.navigate("library"); }
+                    NavButton { label: root.history-label; icon-source: @image-url("../assets/history.svg"); active: root.active-screen == "history"; clicked => root.navigate("history"); }
                     Rectangle { height: 12px; background: transparent; }
                     HorizontalLayout {
                         height: 28px;
@@ -197,14 +260,6 @@ export component AppWindow inherits Window {
                         }
                     }
                     NavButton { label: "Settings"; icon-source: @image-url("../assets/settings.svg"); active: root.settings-open; clicked => root.toggle-settings(); }
-                    Rectangle {
-                        height: 58px; border-radius: 9px; background: #171a22;
-                        HorizontalLayout {
-                            padding: 10px; spacing: 10px;
-                            Rectangle { width: 34px; height: 34px; border-radius: 17px; background: #353a49; Text { text: "F"; color: #fff; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
-                            VerticalLayout { alignment: center; Text { text: "Local library"; color: #e9eaf0; font-size: 12px; font-weight: 600; } Text { text: "Desktop player"; color: #777d8d; font-size: 10px; } }
-                        }
-                    }
 
                 }
                 new-playlist-popup := PopupWindow {
@@ -269,7 +324,7 @@ export component AppWindow inherits Window {
                             border-width: 1px;
                             HorizontalLayout {
                                 padding-left: 10px; padding-right: 10px; spacing: 6px;
-                                Text { text: root.federation-status-busy ? "◌" : "●"; color: root.federation-status-busy ? #55dbaa : #697080; font-size: 10px; vertical-alignment: center; }
+                                FederationStateIndicator { busy: root.federation-status-busy; running: root.federation-status-running; }
                                 status-label := Text { text: root.federation-status-text; color: #9da3b2; font-size: 10px; overflow: elide; vertical-alignment: center; }
                             }
                         }
@@ -285,9 +340,18 @@ export component AppWindow inherits Window {
                             Text { text: "Good evening"; color: #f5f6fa; font-size: 28px; font-weight: 800; }
                             Text { text: "Artists"; color: #f5f6fa; font-size: 18px; font-weight: 750; }
                             ArtistGrid { artists: root.artists; open(key) => root.open-artist(key); }
-                            Rectangle { height: 8px; background: transparent; }
-                            Text { text: root.recent-label; color: #f5f6fa; font-size: 18px; font-weight: 750; }
-                            TrackList { tracks: root.tracks; play(key) => root.play-track-context("recent", key); action(action, key) => root.track-action(action, key); open-artist(key) => root.open-artist(key); open-release(key) => root.open-release(key); }
+                        }
+                    }
+
+                    if root.active-screen == "history": ScrollView {
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width; spacing: 17px; alignment: start;
+                            Text { height: 46px; vertical-stretch: 0; text: root.history-label; color: #f5f6fa; font-size: 30px; font-weight: 800; vertical-alignment: center; }
+                            Text { height: 18px; vertical-stretch: 0; text: root.history-tracks.length + (root.history-tracks.length == 1 ? " listen" : " listens"); color: #858b9c; font-size: 12px; vertical-alignment: center; }
+                            TrackList { tracks: root.history-tracks; show-artwork: true; play(key) => root.play-track-context("history", key); action(action, key) => root.track-action(action, key); open-artist(key) => root.open-artist(key); open-release(key) => root.open-release(key); }
                         }
                     }
 
@@ -299,6 +363,20 @@ export component AppWindow inherits Window {
                             width: parent.width; spacing: 17px;
                             Text { text: root.library-label; color: #f5f6fa; font-size: 28px; font-weight: 800; }
                             AlbumGrid { releases: root.releases; play(key) => root.play-release(key); open(key) => root.open-release(key); open-artist(key) => root.open-artist(key); }
+                        }
+                    }
+
+                    if root.active-screen == "similarity": ScrollView {
+                        viewport-width: self.width;
+                        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                        VerticalLayout {
+                            width: parent.width; spacing: 17px; alignment: start;
+                            Text { height: 46px; vertical-stretch: 0; text: "Similar to “" + root.similarity-source-title + "”"; color: #f5f6fa; font-size: 30px; font-weight: 800; overflow: elide; vertical-alignment: center; }
+                            if root.similarity-pending: Text { height: 22px; text: "Searching local index and federation…"; color: #55dbaa; font-size: 12px; vertical-alignment: center; }
+                            if root.similarity-error != "": Text { height: 40px; text: root.similarity-error; color: #ff8d98; font-size: 12px; wrap: word-wrap; }
+                            if !root.similarity-pending && root.similarity-error == "" && root.similarity-tracks.length == 0: Text { height: 28px; text: "No matching tracks found."; color: #858b9c; font-size: 12px; vertical-alignment: center; }
+                            TrackList { tracks: root.similarity-tracks; show-artwork: true; play(key) => root.play-track-context("similarity", key); action(action, key) => root.track-action(action, key); open-artist(key) => root.open-artist(key); open-release(key) => root.open-release(key); }
                         }
                     }
 
@@ -405,7 +483,7 @@ export component AppWindow inherits Window {
             }
 
             if root.queue-open: queue-panel := Rectangle {
-                width: 292px;
+                width: 370px;
                 background: #11141b;
                 border-color: #252936;
                 border-width: 1px;
@@ -425,24 +503,132 @@ export component AppWindow inherits Window {
                         viewport-width: self.width;
                         horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
                         vertical-scrollbar-policy: ScrollBarPolicy.always-off;
-                        VerticalLayout {
+                        mouse-drag-pan-enabled: root.queue-drag-source < 0;
+                        queue-list := Rectangle {
                             width: parent.width;
-                            spacing: 4px;
-                            alignment: start;
-                            for item in root.queue-items: Rectangle {
-                                height: 52px; border-radius: 7px; background: item.active ? #242a35 : transparent;
-                                TouchArea { double-clicked => root.play-queue-item(item.key); }
-                                HorizontalLayout {
-                                    padding: 7px; spacing: 10px;
-                                    Rectangle { width: 38px; height: 38px; border-radius: 5px; background: #292d38; Image { source: @image-url("../assets/note.svg"); width: 21px; height: 21px; x: 8px; y: 8px; } if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; } }
-                                    Rectangle {
-                                        width: 190px; height: parent.height; background: transparent; clip: true;
-                                        VerticalLayout {
-                                            x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center;
-                                            MarqueeText { width: parent.width; height: 18px; label: item.title; text-color: item.active ? #55dbaa : #e7e9ef; text-size: 12px; text-weight: 600; }
-                                            LinkText { width: parent.width; label: item.artist; base-color: #777d8d; text-size: 10px; height: 15px; clicked => root.open-artist(item.artist-key); }
+                            height: root.queue-items.length > 0 ? root.queue-items.length * 56px - 4px : 0px;
+                            background: transparent;
+                            for item[index] in root.queue-items: queue-row := Rectangle {
+                                private property <int> visual-index: root.queue-drag-source < 0 ? index
+                                    : index == root.queue-drag-source ? index
+                                    : root.queue-drag-source < root.queue-drag-target && index > root.queue-drag-source && index <= root.queue-drag-target ? index - 1
+                                    : root.queue-drag-target < root.queue-drag-source && index >= root.queue-drag-target && index < root.queue-drag-source ? index + 1
+                                    : index;
+                                x: 0px;
+                                y: self.visual-index * 56px;
+                                width: parent.width;
+                                height: 52px;
+                                background: transparent;
+                                animate y { duration: 110ms; easing: ease-out; }
+                                queue-drag := TouchArea {
+                                    private property <length> start-y;
+                                    mouse-cursor: self.pressed ? grabbing : grab;
+                                    pointer-event(event) => {
+                                        if event.kind == PointerEventKind.cancel {
+                                            if root.queue-drag-source == index {
+                                                root.queue-drag-source = -1;
+                                                root.queue-drag-target = -1;
+                                                root.queue-drag-offset = 0px;
+                                            }
+                                            return;
+                                        }
+                                        if event.button != PointerEventButton.left {
+                                            return;
+                                        }
+                                        if event.kind == PointerEventKind.down {
+                                            self.start-y = self.mouse-y;
+                                            root.queue-drag-source = index;
+                                            root.queue-drag-target = index;
+                                            root.queue-drag-offset = 0px;
+                                        } else if event.kind == PointerEventKind.up {
+                                            if root.queue-drag-source == index && root.queue-drag-target != index {
+                                                root.move-queue-item(item.key, root.queue-drag-target);
+                                            }
+                                            root.queue-drag-source = -1;
+                                            root.queue-drag-target = -1;
+                                            root.queue-drag-offset = 0px;
                                         }
                                     }
+                                    moved => {
+                                        if self.pressed && root.queue-drag-source == index {
+                                            root.queue-drag-offset = self.mouse-y - self.start-y;
+                                            root.queue-drag-target = max(0, min(root.queue-items.length - 1, index + round(root.queue-drag-offset / 56px)));
+                                        }
+                                    }
+                                    double-clicked => root.play-queue-item(item.key);
+                                }
+                                row-visual := Rectangle {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    opacity: root.queue-drag-source == index ? 0 : 1;
+                                    border-radius: 7px;
+                                    background: item.active ? #242a35 : queue-drag.has-hover ? #1b1f29 : transparent;
+                                    HorizontalLayout {
+                                        padding: 7px; spacing: 10px;
+                                        Rectangle { width: 38px; height: 38px; border-radius: 5px; background: #292d38; Image { source: @image-url("../assets/note.svg"); width: 21px; height: 21px; x: 8px; y: 8px; } if item.has-artwork: Image { source: item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; } }
+                                        Rectangle {
+                                            horizontal-stretch: 1; height: parent.height; background: transparent; clip: true;
+                                            VerticalLayout {
+                                                x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center;
+                                                MarqueeText { width: parent.width; height: 18px; label: item.title; text-color: item.active ? #55dbaa : #e7e9ef; text-size: 12px; text-weight: 600; }
+                                                LinkText { width: parent.width; label: item.artist; base-color: #777d8d; text-size: 10px; height: 15px; clicked => root.open-artist(item.artist-key); }
+                                            }
+                                        }
+                                        TrackActionButton { active: item.liked; icon-source: @image-url("../assets/heart.svg"); clicked => root.track-action("like", item.track-key); }
+                                        TrackActionButton { icon-source: @image-url("../assets/more.svg"); clicked => queue-menu.show(); }
+                                        IconButton { width: 28px; height: 28px; icon-source: @image-url("../assets/close.svg"); clicked => root.remove-queue-item(item.key); }
+                                    }
+                                }
+                                queue-menu := PopupWindow {
+                                    x: queue-row.width - self.width - 8px;
+                                    y: 46px;
+                                    width: 184px;
+                                    height: 118px;
+                                    close-policy: close-on-click-outside;
+                                    Rectangle {
+                                        border-radius: 8px;
+                                        background: #222631;
+                                        border-color: #3a3f4d;
+                                        border-width: 1px;
+                                        drop-shadow-color: #00000080;
+                                        drop-shadow-blur: 14px;
+                                        drop-shadow-offset-y: 4px;
+                                        VerticalLayout {
+                                            padding: 6px; spacing: 1px;
+                                            TrackMenuItem { icon-source: @image-url("../assets/info.svg"); label: "Track information"; clicked => { queue-menu.close(); root.track-action("information", item.track-key); } }
+                                            TrackMenuItem { icon-source: @image-url("../assets/search.svg"); label: "Find similar"; clicked => { queue-menu.close(); root.track-action("similar", item.track-key); } }
+                                            TrackMenuItem { icon-source: @image-url("../assets/playlist-add.svg"); label: "Add to playlist"; clicked => { queue-menu.close(); root.track-action("playlist", item.track-key); } }
+                                        }
+                                    }
+                                }
+                            }
+                            if root.queue-drag-source >= 0: drag-preview := Rectangle {
+                                private property <QueueView> item: root.queue-items[root.queue-drag-source];
+                                x: 0px;
+                                y: max(0px, min(parent.height - self.height, root.queue-drag-source * 56px + root.queue-drag-offset));
+                                width: parent.width;
+                                height: 52px;
+                                border-radius: 7px;
+                                background: #29362f;
+                                border-width: 1px;
+                                border-color: #55dbaa;
+                                drop-shadow-color: #000000a0;
+                                drop-shadow-blur: 16px;
+                                drop-shadow-offset-y: 5px;
+                                HorizontalLayout {
+                                    padding: 7px; spacing: 10px;
+                                    Rectangle { width: 38px; height: 38px; border-radius: 5px; background: #292d38; Image { source: @image-url("../assets/note.svg"); width: 21px; height: 21px; x: 8px; y: 8px; } if drag-preview.item.has-artwork: Image { source: drag-preview.item.artwork; image-fit: ImageFit.cover; width: parent.width; height: parent.height; } }
+                                    Rectangle {
+                                        horizontal-stretch: 1; height: parent.height; background: transparent; clip: true;
+                                        VerticalLayout {
+                                            x: 0px; y: 0px; width: parent.width; height: parent.height; alignment: center;
+                                            MarqueeText { width: parent.width; height: 18px; label: drag-preview.item.title; text-color: drag-preview.item.active ? #55dbaa : #e7e9ef; text-size: 12px; text-weight: 600; }
+                                            Text { width: parent.width; height: 15px; text: drag-preview.item.artist; color: #777d8d; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                                        }
+                                    }
+                                    Rectangle { width: 28px; height: 28px; border-radius: 6px; background: drag-preview.item.liked ? #255845 : transparent; Image { source: @image-url("../assets/heart.svg"); width: 16px; height: 16px; x: 6px; y: 6px; } }
+                                    Rectangle { width: 28px; height: 28px; Image { source: @image-url("../assets/more.svg"); width: 16px; height: 16px; x: 6px; y: 6px; } }
+                                    Rectangle { width: 28px; height: 28px; Image { source: @image-url("../assets/close.svg"); width: 16px; height: 16px; x: 6px; y: 6px; } }
                                 }
                             }
                         }
@@ -565,6 +751,28 @@ export component AppWindow inherits Window {
                                     vertical-scrollbar-policy: ScrollBarPolicy.always-off;
                                     VerticalLayout {
                                         spacing: 4px;
+                                        for pairing in root.pending-pairings: Rectangle {
+                                            height: pairing.group-conflict ? 142px : 76px; border-radius: 7px; background: #252a35;
+                                            VerticalLayout {
+                                                padding: 8px; spacing: 5px;
+                                                Text { text: pairing.name + " wants to connect"; color: #f0f1f5; font-size: 11px; font-weight: 650; overflow: elide; }
+                                                Text { text: pairing.details; color: #7f8797; font-size: 9px; overflow: elide; }
+                                                if pairing.group-conflict: Text { text: pairing.group-summary; color: #d9a9d0; font-size: 9px; overflow: elide; }
+                                                if pairing.group-conflict: Text { text: "Join theirs to keep its current peers syncing."; color: #9ca4b4; font-size: 9px; }
+                                                if pairing.group-conflict: Text { text: "Keep this group moves only this device; its old peers stop syncing."; color: #9ca4b4; font-size: 9px; }
+                                                if pairing.group-conflict: HorizontalLayout {
+                                                    spacing: 7px;
+                                                    RecommendedButton { text: "Join their group"; clicked => root.answer-pairing(pairing.request-id, true, true); }
+                                                    Button { text: "Keep this group"; clicked => root.answer-pairing(pairing.request-id, true, false); }
+                                                    Button { text: "Deny"; clicked => root.answer-pairing(pairing.request-id, false, false); }
+                                                }
+                                                if !pairing.group-conflict: HorizontalLayout {
+                                                    spacing: 7px;
+                                                    Button { text: "Accept"; clicked => root.answer-pairing(pairing.request-id, true, false); }
+                                                    Button { text: "Deny"; clicked => root.answer-pairing(pairing.request-id, false, false); }
+                                                }
+                                            }
+                                        }
                                         for device in root.connected-devices: DeviceRow {
                                             visible: !device.active;
                                             height: !device.active ? 48px : 0px;
@@ -572,23 +780,31 @@ export component AppWindow inherits Window {
                                             selectable: !device.revoked && (device.online || device.is-self);
                                             selected(id) => root.select-device(id);
                                         }
-                                        for pairing in root.pending-pairings: Rectangle {
-                                            height: 76px; border-radius: 7px; background: #252a35;
-                                            VerticalLayout {
-                                                padding: 8px; spacing: 5px;
-                                                Text { text: pairing.name + " wants to connect"; color: #f0f1f5; font-size: 11px; font-weight: 650; overflow: elide; }
-                                                Text { text: pairing.details; color: #7f8797; font-size: 9px; overflow: elide; }
-                                                HorizontalLayout {
-                                                    spacing: 7px;
-                                                    Button { text: "Accept"; clicked => root.answer-pairing(pairing.request-id, true, pairing.group-conflict); }
-                                                    Button { text: "Deny"; clicked => root.answer-pairing(pairing.request-id, false, false); }
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                                 Rectangle { height: 1px; background: #303541; }
-                                if root.device-invite != "": Text { text: root.device-invite; color: #9ca4b4; font-size: 9px; wrap: word-wrap; max-height: 36px; overflow: elide; }
+                                if root.device-invite != "": HorizontalLayout {
+                                    height: 32px; spacing: 8px;
+                                    invite-code-frame := Rectangle {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        height: 32px;
+                                        clip: true;
+                                        invite-code := LineEdit {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            text: root.device-invite;
+                                            read-only: true;
+                                        }
+                                    }
+                                    Button {
+                                        text: "Copy";
+                                        clicked => {
+                                            invite-code.select-all();
+                                            invite-code.copy();
+                                        }
+                                    }
+                                }
                                 HorizontalLayout {
                                     spacing: 8px;
                                     device-link := LineEdit { horizontal-stretch: 1; placeholder-text: "Paste frid://i/… invite"; }
@@ -705,7 +921,7 @@ export component AppWindow inherits Window {
                                 spacing: 8px;
                                 LineEdit {
                                     text: root.library-path;
-                                    placeholder-text: "~/Music/Furumi";
+                                    placeholder-text: "Choose a music directory";
                                     horizontal-stretch: 1;
                                     edited => root.library-path-changed(self.text);
                                 }
@@ -744,6 +960,109 @@ export component AppWindow inherits Window {
                                     height: 18px; spacing: 14px;
                                     Text { width: 250px; text: "Published  " + root.federation-debug-published; color: #8f96a6; font-size: 10px; overflow: elide; vertical-alignment: center; }
                                     Text { horizontal-stretch: 1; text: "Endpoint  " + root.federation-debug-endpoint; color: #697080; font-size: 9px; overflow: elide; vertical-alignment: center; }
+                                }
+                            }
+                        }
+                        Rectangle { height: 1px; background: #2a2e38; }
+                        Text { height: 22px; text: "Similarity search"; color: #f0f2f7; font-size: 15px; font-weight: 750; vertical-alignment: center; }
+                        HorizontalLayout {
+                            height: 52px;
+                            VerticalLayout {
+                                Text { text: "Find similar tracks"; color: #e8eaf0; font-size: 13px; font-weight: 650; }
+                                Text { text: "Build a private local audio index. Downloads the selected model when enabled."; color: #818797; font-size: 11px; }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            CheckBox {
+                                text: "Enabled";
+                                checked: root.similarity-enabled;
+                                toggled => root.similarity-enabled-changed(self.checked);
+                            }
+                        }
+                        HorizontalLayout {
+                            height: 44px; spacing: 12px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                Text { text: "Embedding model"; color: #e8eaf0; font-size: 12px; font-weight: 650; }
+                                Text { text: "CC BY-NC-SA 4.0 (or proprietary from MTG)"; color: #818797; font-size: 10px; }
+                            }
+                            ComboBox {
+                                width: 244px;
+                                model: root.similarity-models;
+                                current-value: root.similarity-model;
+                                selected(value) => root.similarity-model-changed(value);
+                            }
+                        }
+                        HorizontalLayout {
+                            height: 44px; spacing: 12px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                Text { text: "Preprocessing profile"; color: #e8eaf0; font-size: 12px; font-weight: 650; }
+                                Text { text: "Full track; long tracks use balanced windows."; color: #818797; font-size: 10px; }
+                            }
+                            ComboBox {
+                                width: 244px;
+                                model: root.similarity-profiles;
+                                current-value: root.similarity-profile;
+                                selected(value) => root.similarity-profile-changed(value);
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                height: 20px;
+                                Text { horizontal-stretch: 1; text: "Minimum similarity"; color: #e8eaf0; font-size: 12px; font-weight: 650; vertical-alignment: center; }
+                                Text { text: round(root.similarity-minimum-score * 100) + "%"; color: #aeb4c2; font-size: 11px; vertical-alignment: center; }
+                            }
+                            Slider { height: 18px; minimum: 0; maximum: 1; value: root.similarity-minimum-score; changed(value) => root.similarity-minimum-score-changed(value); }
+                        }
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                height: 20px;
+                                Text { horizontal-stretch: 1; text: "Maximum tracks per artist"; color: #e8eaf0; font-size: 12px; font-weight: 650; vertical-alignment: center; }
+                                Text { text: root.similarity-max-tracks-per-artist; color: #aeb4c2; font-size: 11px; vertical-alignment: center; }
+                            }
+                            Slider { height: 18px; minimum: 1; maximum: 50; value: root.similarity-max-tracks-per-artist; changed(value) => root.similarity-max-tracks-per-artist-changed(round(value)); }
+                        }
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                height: 20px;
+                                Text { horizontal-stretch: 1; text: "Background workers"; color: #e8eaf0; font-size: 12px; font-weight: 650; vertical-alignment: center; }
+                                Text { text: root.similarity-workers; color: #aeb4c2; font-size: 11px; vertical-alignment: center; }
+                            }
+                            Slider { height: 18px; minimum: 1; maximum: 16; value: root.similarity-workers; changed(value) => root.similarity-workers-changed(round(value)); }
+                        }
+                        HorizontalLayout {
+                            height: 62px;
+                            VerticalLayout {
+                                Text { text: "Search federation too"; color: #e8eaf0; font-size: 13px; font-weight: 650; }
+                                Text { text: "Send an anonymous numeric embedding to peers. No account identity is included."; color: #818797; font-size: 10px; }
+                                Text { text: "A peer may infer the kind of music being searched."; color: #d4ad62; font-size: 10px; }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            CheckBox {
+                                text: "I agree";
+                                checked: root.similarity-federation-consent;
+                                toggled => root.similarity-federation-consent-changed(self.checked);
+                            }
+                        }
+                        Rectangle {
+                            min-height: 112px; max-height: 112px; vertical-stretch: 0;
+                            border-radius: 9px; background: #11151d; border-width: 1px; border-color: #2c3240;
+                            VerticalLayout {
+                                padding: 11px; spacing: 5px;
+                                HorizontalLayout {
+                                    height: 20px;
+                                    Text { horizontal-stretch: 1; text: "Similarity index"; color: #dfe2ea; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                    Text { text: root.similarity-status-phase; color: root.similarity-enabled ? #55dbaa : #777d8d; font-size: 10px; vertical-alignment: center; }
+                                }
+                                Text { height: 17px; text: "Progress  " + root.similarity-status-progress + "    Stored  " + root.similarity-status-storage; color: #8f96a6; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                                Text { height: 17px; text: root.similarity-status-current; color: #697080; font-size: 10px; overflow: elide; vertical-alignment: center; }
+                                HorizontalLayout {
+                                    height: 28px;
+                                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                                    Button { text: "Clear stored embeddings"; clicked => root.clear-similarity(); }
                                 }
                             }
                         }

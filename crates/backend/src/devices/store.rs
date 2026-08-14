@@ -108,6 +108,7 @@ impl DeviceSync {
             .collect::<rusqlite::Result<Vec<_>>>()?
         };
         let pending = {
+            let local_group_id = identity.group_id.as_str();
             let mut stmt = conn.prepare(
                 "SELECT request_id, device_id, name, client_version,
                         requester_group_id, requester_group_active_devices
@@ -115,14 +116,25 @@ impl DeviceSync {
                  ORDER BY created_at_ms",
             )?;
             stmt.query_map([], |row| {
+                let requester_group_id = row.get::<_, Option<String>>(4)?;
+                let requester_group_active_devices =
+                    usize::try_from(row.get::<_, i64>(5)?.max(0)).unwrap_or(usize::MAX);
+                let group_conflict = requester_group_conflict(
+                    local_group_id,
+                    requester_group_id.as_deref(),
+                    requester_group_active_devices,
+                );
                 Ok(PendingPairing {
                     request_id: row.get(0)?,
                     device_id: row.get(1)?,
                     name: row.get(2)?,
                     client_version: row.get(3)?,
-                    requester_group_id: row.get(4)?,
-                    requester_group_active_devices: usize::try_from(row.get::<_, i64>(5)?.max(0))
-                        .unwrap_or(usize::MAX),
+                    requester_group_id: group_conflict.then_some(requester_group_id).flatten(),
+                    requester_group_active_devices: if group_conflict {
+                        requester_group_active_devices
+                    } else {
+                        0
+                    },
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
@@ -480,8 +492,12 @@ impl DeviceSync {
                 command,
             } => self.apply_playback_command(target_device_id, command, &op.op_id)?,
             SyncOpPayload::ListenRecorded { event } => {
-                self.library
-                    .apply_listen_event(event, &op.origin_device_id)?;
+                if self
+                    .library
+                    .apply_listen_event(event, &op.origin_device_id)?
+                {
+                    self.notify_library();
+                }
             }
         }
         Ok(())

@@ -222,7 +222,7 @@ pub struct BuildInfoSnapshot {
     pub protocols: Vec<VersionEntrySnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SettingsSnapshot {
     pub network_id: String,
     pub device_name: String,
@@ -230,6 +230,54 @@ pub struct SettingsSnapshot {
     pub federation_enabled: bool,
     pub save_federated_on_listen: bool,
     pub language: String,
+    pub similarity: SimilaritySettingsSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimilaritySettingsSnapshot {
+    pub enabled: bool,
+    pub model: String,
+    pub profile: String,
+    pub workers: usize,
+    pub minimum_score: f32,
+    pub max_tracks_per_artist: usize,
+    pub federation_consent: bool,
+    pub active_profile: Option<String>,
+}
+
+impl Default for SimilaritySettingsSnapshot {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: "discogs-effnet-bsdynamic-1".into(),
+            profile: "furumi-full-track-v1".into(),
+            workers: std::thread::available_parallelism()
+                .map_or(1, |count| (count.get() / 2).clamp(1, 4)),
+            minimum_score: 0.70,
+            max_tracks_per_artist: 5,
+            federation_consent: false,
+            active_profile: None,
+        }
+    }
+}
+
+impl SimilaritySettingsSnapshot {
+    #[must_use]
+    pub fn normalized(mut self) -> Self {
+        if self.model.trim().is_empty() {
+            self.model = "discogs-effnet-bsdynamic-1".into();
+        }
+        if self.profile.trim().is_empty() {
+            self.profile = "furumi-full-track-v1".into();
+        }
+        self.workers = self.workers.clamp(1, 16);
+        if !self.minimum_score.is_finite() {
+            self.minimum_score = 0.70;
+        }
+        self.minimum_score = self.minimum_score.clamp(0.0, 1.0);
+        self.max_tracks_per_artist = self.max_tracks_per_artist.clamp(1, 50);
+        self
+    }
 }
 
 impl Default for SettingsSnapshot {
@@ -237,12 +285,38 @@ impl Default for SettingsSnapshot {
         Self {
             network_id: "furumi".into(),
             device_name: String::new(),
-            library_path: "~/Music/Furumi".into(),
+            // The backend resolves this from the platform's shared Furumi data
+            // directory before publishing its first authoritative snapshot.
+            library_path: String::new(),
             federation_enabled: true,
             save_federated_on_listen: true,
             language: "English".into(),
+            similarity: SimilaritySettingsSnapshot::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SimilarityStatusSnapshot {
+    pub phase: String,
+    pub active_profile: Option<String>,
+    pub target_profile: Option<String>,
+    pub model: String,
+    pub total_tracks: usize,
+    pub completed_tracks: usize,
+    pub failed_tracks: usize,
+    pub stored_vectors: usize,
+    pub stored_bytes: u64,
+    pub current_track: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SimilaritySearchSnapshot {
+    pub source_title: String,
+    pub results: Vec<Track>,
+    pub pending: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -257,6 +331,8 @@ pub struct BackendSnapshot {
     pub build_info: BuildInfoSnapshot,
     pub connected_devices: ConnectedDevicesSnapshot,
     pub settings: SettingsSnapshot,
+    pub similarity_status: SimilarityStatusSnapshot,
+    pub similarity_search: SimilaritySearchSnapshot,
     pub playback_error: Option<String>,
     pub settings_error: Option<String>,
 }
@@ -284,6 +360,17 @@ pub enum BackendCommand {
         track: TrackKey,
     },
     PlayQueueItem {
+        item_id: QueueItemId,
+    },
+    SearchSimilar {
+        track: TrackKey,
+    },
+    ClearSimilarity,
+    MoveQueueItem {
+        item_id: QueueItemId,
+        target_index: usize,
+    },
+    RemoveQueueItem {
         item_id: QueueItemId,
     },
     PlayContext {

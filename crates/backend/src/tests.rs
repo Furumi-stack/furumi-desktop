@@ -1,5 +1,19 @@
 use super::*;
 
+#[test]
+fn configured_library_path_controls_permanent_federated_audio_storage() {
+    let cache = std::path::Path::new("/cache/furumi-desktop/federation-media");
+
+    assert_eq!(
+        federated_audio_directory("/chosen/music", true, cache),
+        std::path::Path::new("/chosen/music")
+    );
+    assert_eq!(
+        federated_audio_directory("/chosen/music", false, cache),
+        cache.join("stream-cache")
+    );
+}
+
 fn merge_test_track(key: TrackKey, audio_source: AudioSource) -> Track {
     Track {
         key,
@@ -24,6 +38,57 @@ fn merge_test_track(key: TrackKey, audio_source: AudioSource) -> Track {
         liked: false,
         audio_source,
     }
+}
+
+fn similarity_test_candidate(
+    id: i64,
+    artist: &str,
+    score: f32,
+    signature: u8,
+) -> SimilarityCandidate {
+    let mut track = merge_test_track(
+        TrackKey::local(LocalTrackId::new(id)),
+        AudioSource::LocalFile(format!("{id}.flac").into()),
+    );
+    track.title = format!("Track {id}");
+    track.artist = artist.into();
+    track.artists[0].name = artist.into();
+    (
+        track,
+        score,
+        Some([signature; music_dht::similarity::SIMILARITY_SIGNATURE_BYTES]),
+    )
+}
+
+#[test]
+fn similarity_results_apply_one_artist_cap_after_combining_sources() {
+    let tracks = rank_similarity_candidates(
+        vec![
+            similarity_test_candidate(1, "same artist", 0.70, 1),
+            similarity_test_candidate(2, "other artist", 0.90, 2),
+            similarity_test_candidate(3, "same artist", 0.80, 3),
+            similarity_test_candidate(4, "same artist", 0.60, 4),
+        ],
+        1,
+    );
+
+    assert_eq!(tracks.len(), 2);
+    assert_eq!(tracks[0].title, "Track 2");
+    assert_eq!(tracks[1].title, "Track 3");
+}
+
+#[test]
+fn similarity_results_drop_cross_source_near_duplicates() {
+    let tracks = rank_similarity_candidates(
+        vec![
+            similarity_test_candidate(1, "first", 0.90, 7),
+            similarity_test_candidate(2, "second", 0.80, 7),
+        ],
+        5,
+    );
+
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].title, "Track 1");
 }
 
 #[test]

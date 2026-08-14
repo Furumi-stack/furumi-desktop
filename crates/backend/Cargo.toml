@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+blake3.workspace = true
+futures-util.workspace = true
 furumi-backend-api.workspace = true
 furumi-domain.workspace = true
 furumi-library.workspace = true
@@ -14,6 +16,10 @@ music-dht.workspace = true
 directories.workspace = true
 rusqlite.workspace = true
 rodio.workspace = true
+reqwest.workspace = true
+rustfft.workspace = true
+sha2.workspace = true
+tract-onnx.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 serde_json.workspace = true

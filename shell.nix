@@ -35,5 +35,10 @@ pkgs.mkShell {
     xorg.libXrandr
   ]);
 
+  # The software renderer is the reliable default in a NixOS development
+  # shell: it avoids mixing the shell's Vulkan loader with the host's graphics
+  # driver stack. Override this when explicitly testing another renderer.
+  SLINT_BACKEND = "winit-software";
+
   RUST_BACKTRACE = "1";
 }

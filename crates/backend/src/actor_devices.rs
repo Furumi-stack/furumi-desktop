@@ -216,6 +216,7 @@ impl Actor {
                 }
                 urgent_targets.push(previous);
             }
+            self.finish_listen(music_dht::device_sync::ListenEndReason::Stopped);
             self.audio.stop();
             self.device_role = DevicePlaybackRole::Control;
             self.active_device_id.clone_from(&target.id);

@@ -29,7 +29,7 @@ slint::include_modules!();
 
 mod render;
 use render::{
-    breadcrumb_screen, contributor_lines, find_artist_key, find_release_key, model,
+    breadcrumb_screen, contributor_lines, find_release_key, model, parse_artist_key,
     parse_track_key, release_artist_credits, render, render_catalog, render_current_track,
     render_playback, render_queue, render_search, render_shell, render_track_info,
     selected_release, track_context,
@@ -99,6 +99,7 @@ fn bind_callbacks(window: &AppWindow, state: &Arc<Mutex<AppState>>, backend: &Ba
             let screen = match target.as_str() {
                 "search" => Screen::Search,
                 "library" => Screen::Library,
+                "history" => Screen::History,
                 _ => Screen::Home,
             };
             dispatch_action(&window, &state, &backend, UiAction::Navigate(screen));
@@ -144,6 +145,7 @@ fn bind_callbacks(window: &AppWindow, state: &Arc<Mutex<AppState>>, backend: &Ba
                 "add-end" => UiAction::AddToEnd(vec![key]),
                 "information" => UiAction::ShowTrackInfo(key),
                 "playlist" => UiAction::ShowPlaylistPicker(key),
+                "similar" => UiAction::SearchSimilar(key),
                 // The remaining presentation actions terminate here until
                 // their backend capabilities are introduced.
                 _ => return,
@@ -152,6 +154,7 @@ fn bind_callbacks(window: &AppWindow, state: &Arc<Mutex<AppState>>, backend: &Ba
         }
     });
     bind_playlist_callbacks(window, state, backend);
+    bind_queue_callbacks(window, state, backend);
     bind_device_callbacks(window, state, backend);
     bind_settings_callbacks(window, state, backend);
     window.on_dismiss_error({
@@ -236,6 +239,9 @@ fn bind_playlist_callbacks(
         let backend = backend.clone();
         move || dispatch_action(&window, &state, &backend, UiAction::ClosePlaylistPicker)
     });
+}
+
+fn bind_queue_callbacks(window: &AppWindow, state: &Arc<Mutex<AppState>>, backend: &BackendHandle) {
     window.on_play_queue_item({
         let window = window.as_weak();
         let state = Arc::clone(state);
@@ -247,6 +253,41 @@ fn bind_playlist_callbacks(
                     &state,
                     &backend,
                     UiAction::PlayQueueItem(QueueItemId::new(id)),
+                );
+            }
+        }
+    });
+    window.on_move_queue_item({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |id, target_index| {
+            let (Ok(id), Ok(target_index)) = (id.parse::<u64>(), usize::try_from(target_index))
+            else {
+                return;
+            };
+            dispatch_action(
+                &window,
+                &state,
+                &backend,
+                UiAction::MoveQueueItem {
+                    item_id: QueueItemId::new(id),
+                    target_index,
+                },
+            );
+        }
+    });
+    window.on_remove_queue_item({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |id| {
+            if let Ok(id) = id.parse::<u64>() {
+                dispatch_action(
+                    &window,
+                    &state,
+                    &backend,
+                    UiAction::RemoveQueueItem(QueueItemId::new(id)),
                 );
             }
         }
@@ -295,7 +336,7 @@ fn bind_catalog_callbacks(
         let state = Arc::clone(state);
         let backend = backend.clone();
         move |target| {
-            let screen = with_state(&state, |state| breadcrumb_screen(state, &target));
+            let screen = breadcrumb_screen(&target);
             if let Some(screen) = screen {
                 dispatch_action(&window, &state, &backend, UiAction::Navigate(screen));
             }
@@ -306,7 +347,7 @@ fn bind_catalog_callbacks(
         let state = Arc::clone(state);
         let backend = backend.clone();
         move |key| {
-            let artist = with_state(&state, |state| find_artist_key(state, &key));
+            let artist = parse_artist_key(&key);
             if let Some(key) = artist {
                 dispatch_action(
                     &window,
@@ -519,6 +560,7 @@ fn bind_settings_callbacks(
             );
         }
     });
+    bind_similarity_settings_callbacks(window, state, backend);
     window.on_language_changed({
         let window = window.as_weak();
         let state = Arc::clone(state);
@@ -531,6 +573,118 @@ fn bind_settings_callbacks(
                 UiAction::LanguageChanged(language.to_string()),
             );
         }
+    });
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one explicit binding per similarity setting keeps callback ownership obvious"
+)]
+fn bind_similarity_settings_callbacks(
+    window: &AppWindow,
+    state: &Arc<Mutex<AppState>>,
+    backend: &BackendHandle,
+) {
+    window.on_similarity_enabled_changed({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |enabled| {
+            dispatch_action(
+                &window,
+                &state,
+                &backend,
+                UiAction::SimilarityEnabledChanged(enabled),
+            );
+        }
+    });
+    window.on_similarity_model_changed({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |model| {
+            dispatch_action(
+                &window,
+                &state,
+                &backend,
+                UiAction::SimilarityModelChanged(model.to_string()),
+            );
+        }
+    });
+    window.on_similarity_profile_changed({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |profile| {
+            dispatch_action(
+                &window,
+                &state,
+                &backend,
+                UiAction::SimilarityProfileChanged(profile.to_string()),
+            );
+        }
+    });
+    window.on_similarity_workers_changed({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |workers| {
+            if let Ok(workers) = usize::try_from(workers) {
+                dispatch_action(
+                    &window,
+                    &state,
+                    &backend,
+                    UiAction::SimilarityWorkersChanged(workers),
+                );
+            }
+        }
+    });
+    window.on_similarity_minimum_score_changed({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |minimum_score| {
+            dispatch_action(
+                &window,
+                &state,
+                &backend,
+                UiAction::SimilarityMinimumScoreChanged(minimum_score),
+            );
+        }
+    });
+    window.on_similarity_max_tracks_per_artist_changed({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |maximum| {
+            if let Ok(maximum) = usize::try_from(maximum) {
+                dispatch_action(
+                    &window,
+                    &state,
+                    &backend,
+                    UiAction::SimilarityMaxTracksPerArtistChanged(maximum),
+                );
+            }
+        }
+    });
+    window.on_similarity_federation_consent_changed({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move |consent| {
+            dispatch_action(
+                &window,
+                &state,
+                &backend,
+                UiAction::SimilarityFederationConsentChanged(consent),
+            );
+        }
+    });
+    window.on_clear_similarity({
+        let window = window.as_weak();
+        let state = Arc::clone(state);
+        let backend = backend.clone();
+        move || dispatch_action(&window, &state, &backend, UiAction::ClearSimilarity)
     });
 }
 
@@ -717,11 +871,13 @@ fn dispatch_event(window: &AppWindow, state: &Arc<Mutex<AppState>>, event: AppEv
             || previous.federation_debug != state.backend.federation_debug
             || previous.connected_devices != state.backend.connected_devices
             || previous.settings != state.backend.settings
+            || previous.similarity_status != state.backend.similarity_status
             || previous.playback_error != state.backend.playback_error
             || previous.settings_error != state.backend.settings_error;
         let catalog_changed = previous.library != state.backend.library
             || previous.search != state.backend.search
             || previous.queue != state.backend.queue;
+        let similarity_changed = previous.similarity_search != state.backend.similarity_search;
         let queue_changed = previous.queue != state.backend.queue;
         if shell_changed {
             render_shell(window, state);
@@ -734,6 +890,9 @@ fn dispatch_event(window: &AppWindow, state: &Arc<Mutex<AppState>>, event: AppEv
         if queue_changed {
             render_queue(window, state);
             render_current_track(window, state);
+        }
+        if similarity_changed {
+            render::render_similarity(window, state);
         }
         render_playback(window, state);
     });

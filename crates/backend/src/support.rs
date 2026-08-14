@@ -15,6 +15,18 @@ pub(super) fn expand_tilde(value: &str) -> std::path::PathBuf {
     }
 }
 
+pub(super) fn federated_audio_directory(
+    library_path: &str,
+    keep: bool,
+    federation_cache_dir: &std::path::Path,
+) -> std::path::PathBuf {
+    if keep {
+        expand_tilde(library_path)
+    } else {
+        federation_cache_dir.join("stream-cache")
+    }
+}
+
 pub(super) fn normalize_device_name(value: &str) -> String {
     let value = value.trim();
     if value.is_empty() {
@@ -31,10 +43,18 @@ pub(super) fn selected_track_position(tracks: &[Track], selected: &TrackKey) -> 
         .unwrap_or(0)
 }
 
+pub(super) fn seconds_to_milliseconds(seconds: f64) -> i64 {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return 0;
+    }
+    let duration = Duration::from_secs_f64(seconds.min(Duration::MAX.as_secs_f64()));
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+}
+
 pub(super) fn runtime_build_info() -> BuildInfoSnapshot {
     use music_dht::capabilities::{
         CATALOG_ID, CapabilityManifest, DEVICE_SYNC_ID, FEDERATION_NET_ID, MUSIC_DHT_ID,
-        RENDEZVOUS_ID, TICKET_ID,
+        RENDEZVOUS_ID, SIMILARITY_DHT_ID, SIMILARITY_ID, TICKET_ID,
     };
 
     let manifest = CapabilityManifest::frid("furumi-desktop", env!("CARGO_PKG_VERSION"));
@@ -70,6 +90,8 @@ pub(super) fn runtime_build_info() -> BuildInfoSnapshot {
             protocol("Rendezvous", RENDEZVOUS_ID),
             protocol("Music DHT", MUSIC_DHT_ID),
             protocol("Catalog", CATALOG_ID),
+            protocol("Similarity search", SIMILARITY_ID),
+            protocol("Similarity routing", SIMILARITY_DHT_ID),
             VersionEntrySnapshot {
                 name: "Audio transfer".into(),
                 version: federation::AUDIO_PROTOCOL_VERSION.to_string(),
@@ -98,6 +120,7 @@ pub(super) fn find_catalog_track<'a>(
         .featured_releases
         .iter()
         .flat_map(|release| release.tracks.iter())
+        .chain(library.recently_played.iter())
         .chain(
             library
                 .playlists
@@ -785,10 +808,22 @@ pub(super) fn library_snapshot(
             tracks,
         });
     }
-    let recently_played = releases
-        .iter()
-        .flat_map(|release| release.tracks.iter().cloned())
-        .take(12)
+    let recently_played = catalog
+        .listen_history(500)?
+        .into_iter()
+        .filter_map(|entry| {
+            let content_id = ContentId::parse(entry.content_id.clone()).ok()?;
+            let mut track = catalog
+                .track_by_content_id(content_id.as_str())
+                .ok()
+                .flatten()
+                .map_or_else(
+                    || history_placeholder(&entry, content_id),
+                    |track| library_track(track, ""),
+                );
+            track.liked = track_is_liked(&track, &liked_ids);
+            Some(track)
+        })
         .collect();
     let mut playlists = Vec::new();
     for card in catalog.playlists()? {
@@ -814,6 +849,43 @@ pub(super) fn library_snapshot(
         recently_played,
         playlists,
     })
+}
+
+fn history_placeholder(entry: &furumi_library::ListenHistoryEntry, content_id: ContentId) -> Track {
+    let peer_id = "history".to_owned();
+    let artist = ArtistRef {
+        key: ArtistKey::Federation {
+            peer_id: peer_id.clone(),
+            id: format!("name:{}", music_dht::normalize_name(&entry.artist)),
+        },
+        name: entry.artist.clone(),
+    };
+    Track {
+        key: TrackKey::remote(content_id.clone()),
+        title: entry.title.clone(),
+        artist: entry.artist.clone(),
+        artists: vec![artist],
+        featured_artists: Vec::new(),
+        release: String::new(),
+        release_id: ReleaseKey::Federation {
+            peer_id: peer_id.clone(),
+            id: format!("history:{}", entry.listen_id),
+        },
+        duration_seconds: 0.0,
+        track_number: None,
+        disc_number: None,
+        cover_uri: None,
+        audio_format: None,
+        audio_bitrate_kbps: None,
+        audio_sample_rate_hz: None,
+        audio_bit_depth: None,
+        file_size_bytes: None,
+        liked: false,
+        audio_source: AudioSource::Federation {
+            peer_id,
+            content_id,
+        },
+    }
 }
 
 pub(super) fn track_is_liked(track: &Track, liked_ids: &HashSet<String>) -> bool {
